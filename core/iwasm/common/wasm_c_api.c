@@ -3691,7 +3691,16 @@ wasm_instance_new(wasm_store_t *store,
 {
     const uint32 stack_size = 32 * 1024;
     const uint32 heap_size = 32 * 1024;
-    return wasm_instance_new_ex(store, module, imports, traps, stack_size, heap_size);
+    char error_buf[128] = { 0 };
+
+    wasm_instance_t *instance = wasm_instance_new_ex(
+        store, module, imports, traps, stack_size, heap_size, error_buf, sizeof(error_buf));
+
+    if (!instance) {
+        LOG_ERROR(error_buf);
+    }
+
+    return instance;
 }
 
 wasm_instance_t *
@@ -3700,9 +3709,10 @@ wasm_instance_new_ex(wasm_store_t *store,
                   const wasm_extern_t *const imports[],
                   own wasm_trap_t **traps,
                   uint32_t stack_size,
-                  uint32_t heap_size)
+                  uint32_t heap_size,
+                  char* error_buf,
+                  uint32_t error_buf_size)
 {
-    char error_buf[128] = { 0 };
     uint32 import_count = 0;
     wasm_instance_t *instance = NULL;
     uint32 i = 0;
@@ -3762,9 +3772,8 @@ wasm_instance_new_ex(wasm_store_t *store,
     }
 
     instance->inst_comm_rt = wasm_runtime_instantiate(
-      *module, stack_size, heap_size, error_buf, sizeof(error_buf));
+      *module, stack_size, heap_size, error_buf, error_buf_size);
     if (!instance->inst_comm_rt) {
-        LOG_ERROR(error_buf);
         goto failed;
     }
 
