@@ -542,6 +542,11 @@ WASM_API_EXTERN own wasm_instance_t* wasm_instance_new(
   own wasm_trap_t**
 );
 
+WASM_API_EXTERN own wasm_instance_t* wasm_instance_new_ex(
+  wasm_store_t*, const wasm_module_t*, const wasm_extern_t *const imports[],
+  own wasm_trap_t**, uint32_t stack_size, uint32_t heap_size
+);
+
 WASM_API_EXTERN void wasm_instance_exports(const wasm_instance_t*, own wasm_extern_vec_t* out);
 
 
