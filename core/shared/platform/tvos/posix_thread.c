@@ -352,9 +352,6 @@ os_thread_get_stack_boundary()
  */
 static os_thread_local_attribute bool thread_signal_inited = false;
 
-/* The signal alternate stack base addr */
-static os_thread_local_attribute uint8 *sigalt_stack_base_addr;
-
 #if defined(__clang__)
 #pragma clang optimize off
 #elif defined(__GNUC__)
@@ -455,7 +452,6 @@ int
 os_thread_signal_init(os_signal_handler handler)
 {
     struct sigaction sig_act;
-    stack_t sigalt_stack_info;
     uint32 map_size = SIG_ALT_STACK_SIZE;
     uint8 *map_addr;
 
@@ -474,38 +470,19 @@ os_thread_signal_init(os_signal_handler handler)
         goto fail1;
     }
 
-    /* Initialize signal alternate stack */
-    memset(map_addr, 0, map_size);
-    sigalt_stack_info.ss_sp = map_addr;
-    sigalt_stack_info.ss_size = map_size;
-    sigalt_stack_info.ss_flags = 0;
-    if (sigaltstack(&sigalt_stack_info, NULL) != 0) {
-        os_printf("Failed to init signal alternate stack\n");
-        goto fail2;
-    }
-
     /* Install signal hanlder */
     sig_act.sa_sigaction = signal_callback;
-    sig_act.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sig_act.sa_flags = SA_SIGINFO | SA_NODEFER;
     sigemptyset(&sig_act.sa_mask);
     if (sigaction(SIGSEGV, &sig_act, NULL) != 0
         || sigaction(SIGBUS, &sig_act, NULL) != 0) {
         os_printf("Failed to register signal handler\n");
-        goto fail3;
     }
 
-    sigalt_stack_base_addr = map_addr;
     signal_handler = handler;
     thread_signal_inited = true;
     return 0;
 
-fail3:
-    memset(&sigalt_stack_info, 0, sizeof(stack_t));
-    sigalt_stack_info.ss_flags = SS_DISABLE;
-    sigalt_stack_info.ss_size = map_size;
-    sigaltstack(&sigalt_stack_info, NULL);
-fail2:
-    os_munmap(map_addr, map_size);
 fail1:
     destroy_stack_guard_pages();
     return -1;
@@ -514,18 +491,9 @@ fail1:
 void
 os_thread_signal_destroy()
 {
-    stack_t sigalt_stack_info;
 
     if (!thread_signal_inited)
         return;
-
-    /* Disable signal alternate stack */
-    memset(&sigalt_stack_info, 0, sizeof(stack_t));
-    sigalt_stack_info.ss_flags = SS_DISABLE;
-    sigalt_stack_info.ss_size = SIG_ALT_STACK_SIZE;
-    sigaltstack(&sigalt_stack_info, NULL);
-
-    os_munmap(sigalt_stack_base_addr, SIG_ALT_STACK_SIZE);
 
     destroy_stack_guard_pages();
 
@@ -547,13 +515,5 @@ os_signal_unmask()
 void
 os_sigreturn()
 {
-#if defined(__APPLE__)
-#define UC_RESET_ALT_STACK 0x80000000
-    extern int __sigreturn(void *, int);
-
-    /* It's necessary to call __sigreturn to restore the sigaltstack state
-       after exiting the signal handler. */
-    __sigreturn(NULL, UC_RESET_ALT_STACK);
-#endif
 }
 #endif /* end of OS_ENABLE_HW_BOUND_CHECK */
