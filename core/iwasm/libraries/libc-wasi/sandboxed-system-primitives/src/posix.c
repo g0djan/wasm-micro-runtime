@@ -2167,6 +2167,7 @@ convert_utimens_arguments(__wasi_timestamp_t st_atim,
                           __wasi_timestamp_t st_mtim,
                           __wasi_fstflags_t fstflags, struct timespec *ts)
 {
+#ifndef __ORBIS__
     if ((fstflags & __WASI_FILESTAT_SET_ATIM_NOW) != 0) {
         ts[0].tv_nsec = UTIME_NOW;
     }
@@ -2186,6 +2187,7 @@ convert_utimens_arguments(__wasi_timestamp_t st_atim,
     else {
         ts[1].tv_nsec = UTIME_OMIT;
     }
+#endif
 }
 
 __wasi_errno_t
@@ -2428,6 +2430,7 @@ wasmtime_ssp_poll_oneoff(
     const __wasi_subscription_t *in, __wasi_event_t *out, size_t nsubscriptions,
     size_t *nevents) NO_LOCK_ANALYSIS
 {
+#ifndef __ORBIS__
     // Sleeping.
     if (nsubscriptions == 1 && in[0].u.type == __WASI_EVENTTYPE_CLOCK) {
         out[0] = (__wasi_event_t){
@@ -2673,6 +2676,9 @@ wasmtime_ssp_poll_oneoff(
     wasm_runtime_free(fos);
     wasm_runtime_free(pfds);
     return error;
+#else
+    return __WASI_ENOTSUP;
+#endif
 }
 
 #if 0

@@ -23,7 +23,6 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <poll.h>
 #include <sched.h>
 #include <errno.h>
 #include <netinet/in.h>
@@ -31,11 +30,15 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/time.h>
-#include <sys/timeb.h>
 #include <sys/uio.h>
-#include <sys/ioctl.h>
 #include <sys/socket.h>
+
+#ifndef __ORBIS__
+#include <poll.h>
+#include <sys/timeb.h>
+#include <sys/ioctl.h>
 #include <sys/resource.h>
+#endif
 
 #ifdef __cplusplus
 extern "C" {

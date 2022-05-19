@@ -49,7 +49,11 @@ os_socket_bind(bh_socket_t socket, const char *host, int *port)
     ling.l_onoff = 1;
     ling.l_linger = 0;
 
+#ifdef __ORBIS__
+    ret = -1;
+#else
     ret = fcntl(socket, F_SETFD, FD_CLOEXEC);
+#endif
     if (ret < 0) {
         goto fail;
     }

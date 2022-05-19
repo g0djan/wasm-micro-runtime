@@ -105,7 +105,7 @@
 #define CONFIG_HAS_STD_ATOMIC 0
 #endif
 
-#if !defined(__NuttX__)
+#if !defined(__NuttX__) && !defined(__ORBIS__)
 #define CONFIG_HAS_D_INO 1
 #else
 #define CONFIG_HAS_D_INO 0
