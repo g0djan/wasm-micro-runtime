@@ -105,8 +105,10 @@ endif ()
 
 ####################### Common sources #######################
 if (NOT MSVC)
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99 -ffunction-sections -fdata-sections \
-                                         -Wall -Wno-unused-parameter -Wno-pedantic")
+    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99 -Wall -Wno-unused-parameter -Wno-pedantic")
+    if(NOT WAMR_EMBED_BITCODE)
+        set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ffunction-sections -fdata-sections")
+    endif()
 endif ()
 
 # include the build config template file
