@@ -23,29 +23,27 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>
 #include <sched.h>
 #include <errno.h>
 #include <netinet/in.h>
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/time.h>
-#include <sys/uio.h>
-#include <sys/socket.h>
-
-#ifndef __ORBIS__
-#include <poll.h>
 #include <sys/timeb.h>
+#include <sys/uio.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/resource.h>
-#endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifndef BH_PLATFORM_LINUX
-#define BH_PLATFORM_LINUX
+#ifndef BH_PLATFORM_DARWIN
+#define BH_PLATFORM_DARWIN
 #endif
 
 /* Stack size of applet threads's native part.  */
@@ -58,7 +56,6 @@ typedef pthread_t korp_tid;
 typedef pthread_mutex_t korp_mutex;
 typedef pthread_cond_t korp_cond;
 typedef pthread_t korp_thread;
-typedef sem_t korp_sem;
 
 #define os_thread_local_attribute __thread
 
