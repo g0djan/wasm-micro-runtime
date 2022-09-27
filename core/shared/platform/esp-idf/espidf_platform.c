@@ -6,28 +6,18 @@
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
 
-
-int errno = 0;
-
-int
-os_thread_sys_init();
-
-void
-os_thread_sys_destroy();
-
 int
 bh_platform_init()
 {
-    return os_thread_sys_init();
+    return 0;
 }
 
 void
 bh_platform_destroy()
-{
-    os_thread_sys_destroy();
-}
+{}
 
-int os_printf(const char *format, ...)
+int
+os_printf(const char *format, ...)
 {
     int ret = 0;
     va_list ap;
@@ -45,78 +35,218 @@ os_vprintf(const char *format, va_list ap)
     return vprintf(format, ap);
 }
 
-void *
-os_mmap(void *hint, size_t size, int prot, int flags)
+uint64
+os_time_get_boot_microsecond(void)
 {
-
-    return BH_MALLOC(size);
+    return (uint64)esp_timer_get_time();
 }
 
-void
-os_munmap(void *addr, size_t size)
+uint8 *
+os_thread_get_stack_boundary(void)
 {
-    BH_FREE(addr);
-}
-
-int
-os_mprotect(void *addr, size_t size, int prot)
-{
-    return 0;
-}
-
-void
-os_dcache_flush()
-{
+#if defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+    TaskStatus_t pxTaskStatus;
+    vTaskGetInfo(xTaskGetCurrentTaskHandle(), &pxTaskStatus, pdTRUE, eInvalid);
+    return pxTaskStatus.pxStackBase;
+#else // !defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+    return NULL;
+#endif
 }
 
 int
-atoi(const char *nptr)
+os_usleep(uint32 usec)
 {
-    bool is_negative = false;
-    int total = 0;
-    const char *p = nptr;
-    char temp = '0';
+    return usleep(usec);
+}
 
-    if (NULL == p) {
-        os_printf("invlaid atoi input\n");
-        return 0;
-    }
+/* Below parts of readv & writev are ported from Nuttx, under Apache License
+ * v2.0 */
 
-    if (*p == '-') {
-        is_negative = true;
-        p++;
-    }
+ssize_t
+readv(int fildes, const struct iovec *iov, int iovcnt)
+{
+    ssize_t ntotal;
+    ssize_t nread;
+    size_t remaining;
+    uint8_t *buffer;
+    int i;
 
-    while ((temp = *p++) != '\0') {
-        if (temp > '9' || temp < '0') {
-            continue;
+    /* Process each entry in the struct iovec array */
+
+    for (i = 0, ntotal = 0; i < iovcnt; i++) {
+        /* Ignore zero-length reads */
+
+        if (iov[i].iov_len > 0) {
+            buffer = iov[i].iov_base;
+            remaining = iov[i].iov_len;
+
+            /* Read repeatedly as necessary to fill buffer */
+
+            do {
+                /* NOTE:  read() is a cancellation point */
+
+                nread = read(fildes, buffer, remaining);
+
+                /* Check for a read error */
+
+                if (nread < 0) {
+                    return nread;
+                }
+
+                /* Check for an end-of-file condition */
+
+                else if (nread == 0) {
+                    return ntotal;
+                }
+
+                /* Update pointers and counts in order to handle partial
+                 * buffer reads.
+                 */
+
+                buffer += nread;
+                remaining -= nread;
+                ntotal += nread;
+            } while (remaining > 0);
         }
-
-        total = total * 10 + (int)(temp - '0');
     }
 
-    if (is_negative)
-        total = 0 - total;
-
-    return total;
+    return ntotal;
 }
 
-void *
-memmove(void *dest, const void *src, size_t n)
+ssize_t
+writev(int fildes, const struct iovec *iov, int iovcnt)
 {
-    char *d = dest;
-    const char *s = src;
+    ssize_t ntotal;
+    ssize_t nwritten;
+    size_t remaining;
+    uint8_t *buffer;
+    int i;
 
-    if (d < s) {
-        while (n--)
-            *d++ = *s++;
+    /* Process each entry in the struct iovec array */
+
+    for (i = 0, ntotal = 0; i < iovcnt; i++) {
+        /* Ignore zero-length writes */
+
+        if (iov[i].iov_len > 0) {
+            buffer = iov[i].iov_base;
+            remaining = iov[i].iov_len;
+
+            /* Write repeatedly as necessary to write the entire buffer */
+
+            do {
+                /* NOTE:  write() is a cancellation point */
+
+                nwritten = write(fildes, buffer, remaining);
+
+                /* Check for a write error */
+
+                if (nwritten < 0) {
+                    return ntotal ? ntotal : -1;
+                }
+
+                /* Update pointers and counts in order to handle partial
+                 * buffer writes.
+                 */
+
+                buffer += nwritten;
+                remaining -= nwritten;
+                ntotal += nwritten;
+            } while (remaining > 0);
+        }
     }
-    else {
-        const char *lasts = s + (n-1);
-        char *lastd = d + (n-1);
-        while (n--)
-            *lastd-- = *lasts--;
-    }
-    return dest;
+
+    return ntotal;
 }
 
+int
+openat(int fd, const char *path, int oflags, ...)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+fstatat(int fd, const char *path, struct stat *buf, int flag)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+mkdirat(int fd, const char *path, mode_t mode)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+ssize_t
+readlinkat(int fd, const char *path, char *buf, size_t bufsize)
+{
+    errno = EINVAL;
+    return -1;
+}
+
+int
+linkat(int fd1, const char *path1, int fd2, const char *path2, int flag)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+renameat(int fromfd, const char *from, int tofd, const char *to)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+symlinkat(const char *target, int fd, const char *path)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+unlinkat(int fd, const char *path, int flag)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+utimensat(int fd, const char *path, const struct timespec ts[2], int flag)
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+DIR *
+fdopendir(int fd)
+{
+    errno = ENOSYS;
+    return NULL;
+}
+
+#if ESP_IDF_VERSION < ESP_IDF_VERSION_VAL(4, 4, 2)
+int
+ftruncate(int fd, off_t length)
+{
+    errno = ENOSYS;
+    return -1;
+}
+#endif
+
+int
+futimens(int fd, const struct timespec times[2])
+{
+    errno = ENOSYS;
+    return -1;
+}
+
+int
+nanosleep(const struct timespec *req, struct timespec *rem)
+{
+    errno = ENOSYS;
+    return -1;
+}

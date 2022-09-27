@@ -30,17 +30,19 @@ typedef aos_task_t korp_thread;
 typedef korp_thread *korp_tid;
 typedef aos_task_t *aos_tid_t;
 typedef aos_mutex_t korp_mutex;
+typedef aos_sem_t korp_sem;
 
 struct os_thread_wait_node;
 typedef struct os_thread_wait_node *os_thread_wait_list;
 typedef struct korp_cond {
-  aos_mutex_t wait_list_lock;
-  os_thread_wait_list thread_wait_list;
+    aos_mutex_t wait_list_lock;
+    os_thread_wait_list thread_wait_list;
 } korp_cond;
 
-#define os_printf  printf
+#define os_printf printf
 #define os_vprintf vprintf
 
+/* clang-format off */
 /* math functions which are not provided by os*/
 double sqrt(double x);
 double floor(double x);
@@ -50,14 +52,16 @@ double fmax(double x, double y);
 double rint(double x);
 double fabs(double x);
 double trunc(double x);
+float sqrtf(float x);
 float floorf(float x);
 float ceilf(float x);
 float fminf(float x, float y);
 float fmaxf(float x, float y);
 float rintf(float x);
+float fabsf(float x);
 float truncf(float x);
 int signbit(double x);
 int isnan(double x);
+/* clang-format on */
 
 #endif /* end of _BH_PLATFORM_H */
-

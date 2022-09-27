@@ -25,6 +25,8 @@
 #define BUILD_TARGET "armv6"
 #elif defined(RTT_WAMR_BUILD_TARGET_ARMV4)
 #define BUILD_TARGET "armv4"
+#elif defined(RTT_WAMR_BUILD_TARGET_X86_32)
+#define BUILD_TARGET "X86_32"
 #else
 #error "unsupported aot platform."
 #endif
@@ -34,6 +36,7 @@ typedef rt_thread_t korp_tid;
 typedef struct rt_mutex korp_mutex;
 typedef struct rt_thread korp_cond;
 typedef struct rt_thread korp_thread;
+typedef unsigned int korp_sem;
 
 typedef rt_uint8_t uint8_t;
 typedef rt_int8_t int8_t;
@@ -42,5 +45,4 @@ typedef rt_int16_t int16_t;
 typedef rt_uint64_t uint64_t;
 typedef rt_int64_t int64_t;
 
-
-#endif //RTTHREAD_PLATFORM_INTERNAL_H
+#endif /* RTTHREAD_PLATFORM_INTERNAL_H */

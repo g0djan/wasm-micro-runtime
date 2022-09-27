@@ -4,23 +4,241 @@
  */
 
 #include "platform_api_vmcore.h"
+#include "platform_api_extension.h"
 
 #ifndef SGX_DISABLE_WASI
 
 #define TRACE_OCALL_FAIL() os_printf("ocall %s failed!\n", __FUNCTION__)
 
-int ocall_socket(int *p_ret, int domain, int type, int protocol);
-int ocall_getsockopt(int *p_ret, int sockfd, int level, int optname,
-                     void *val_buf, unsigned int val_buf_size,
-                     void *len_buf);
+/** OCALLs prototypes **/
+int
+ocall_accept(int *p_ret, int sockfd, void *addr, uint32_t *addrlen,
+             uint32_t addr_size);
 
-int ocall_sendmsg(ssize_t *p_ret, int sockfd, void *msg_buf,
-                  unsigned int msg_buf_size, int flags);
-int ocall_recvmsg(ssize_t *p_ret, int sockfd, void *msg_buf,
-                  unsigned int msg_buf_size, int flags);
-int ocall_shutdown(int *p_ret, int sockfd, int how);
+int
+ocall_bind(int *p_ret, int sockfd, const void *addr, uint32_t addrlen);
 
-int socket(int domain, int type, int protocol)
+int
+ocall_close(int *p_ret, int fd);
+
+int
+ocall_connect(int *p_ret, int sockfd, void *addr, uint32_t addrlen);
+
+int
+ocall_fcntl_long(int *p_ret, int fd, int cmd, long arg);
+
+int
+ocall_getsockname(int *p_ret, int sockfd, void *addr, uint32_t *addrlen,
+                  uint32_t addr_size);
+
+int
+ocall_getsockopt(int *p_ret, int sockfd, int level, int optname, void *val_buf,
+                 unsigned int val_buf_size, void *len_buf);
+
+int
+ocall_listen(int *p_ret, int sockfd, int backlog);
+
+int
+ocall_recv(int *p_ret, int sockfd, void *buf, size_t len, int flags);
+
+int
+ocall_recvmsg(ssize_t *p_ret, int sockfd, void *msg_buf,
+              unsigned int msg_buf_size, int flags);
+
+int
+ocall_send(int *p_ret, int sockfd, const void *buf, size_t len, int flags);
+
+int
+ocall_sendmsg(ssize_t *p_ret, int sockfd, void *msg_buf,
+              unsigned int msg_buf_size, int flags);
+
+int
+ocall_setsockopt(int *p_ret, int sockfd, int level, int optname, void *optval,
+                 unsigned int optlen);
+
+int
+ocall_shutdown(int *p_ret, int sockfd, int how);
+
+int
+ocall_socket(int *p_ret, int domain, int type, int protocol);
+/** OCALLs prototypes end **/
+
+/** In-enclave implementation of POSIX functions **/
+static bool
+is_little_endian()
+{
+    long i = 0x01020304;
+    unsigned char *c = (unsigned char *)&i;
+    return (*c == 0x04) ? true : false;
+}
+
+static void
+swap32(uint8 *pData)
+{
+    uint8 value = *pData;
+    *pData = *(pData + 3);
+    *(pData + 3) = value;
+
+    value = *(pData + 1);
+    *(pData + 1) = *(pData + 2);
+    *(pData + 2) = value;
+}
+
+static void
+swap16(uint8 *pData)
+{
+    uint8 value = *pData;
+    *(pData) = *(pData + 1);
+    *(pData + 1) = value;
+}
+
+uint32
+htonl(uint32 value)
+{
+    uint32 ret;
+    if (is_little_endian()) {
+        ret = value;
+        swap32((uint8 *)&ret);
+        return ret;
+    }
+
+    return value;
+}
+
+uint32
+ntohl(uint32 value)
+{
+    return htonl(value);
+}
+
+uint16
+htons(uint16 value)
+{
+    uint16 ret;
+    if (is_little_endian()) {
+        ret = value;
+        swap16((uint8 *)&ret);
+        return ret;
+    }
+
+    return value;
+}
+
+static uint16
+ntohs(uint16 value)
+{
+    return htons(value);
+}
+
+/* Coming from musl, under MIT license */
+static int
+hexval(unsigned c)
+{
+    if (c - '0' < 10)
+        return c - '0';
+    c |= 32;
+    if (c - 'a' < 6)
+        return c - 'a' + 10;
+    return -1;
+}
+
+/* Coming from musl, under MIT license */
+static int
+inet_pton(int af, const char *restrict s, void *restrict a0)
+{
+    uint16_t ip[8];
+    unsigned char *a = a0;
+    int i, j, v, d, brk = -1, need_v4 = 0;
+
+    if (af == AF_INET) {
+        for (i = 0; i < 4; i++) {
+            for (v = j = 0; j < 3 && isdigit(s[j]); j++)
+                v = 10 * v + s[j] - '0';
+            if (j == 0 || (j > 1 && s[0] == '0') || v > 255)
+                return 0;
+            a[i] = v;
+            if (s[j] == 0 && i == 3)
+                return 1;
+            if (s[j] != '.')
+                return 0;
+            s += j + 1;
+        }
+        return 0;
+    }
+    else if (af != AF_INET6) {
+        errno = EAFNOSUPPORT;
+        return -1;
+    }
+
+    if (*s == ':' && *++s != ':')
+        return 0;
+
+    for (i = 0;; i++) {
+        if (s[0] == ':' && brk < 0) {
+            brk = i;
+            ip[i & 7] = 0;
+            if (!*++s)
+                break;
+            if (i == 7)
+                return 0;
+            continue;
+        }
+        for (v = j = 0; j < 4 && (d = hexval(s[j])) >= 0; j++)
+            v = 16 * v + d;
+        if (j == 0)
+            return 0;
+        ip[i & 7] = v;
+        if (!s[j] && (brk >= 0 || i == 7))
+            break;
+        if (i == 7)
+            return 0;
+        if (s[j] != ':') {
+            if (s[j] != '.' || (i < 6 && brk < 0))
+                return 0;
+            need_v4 = 1;
+            i++;
+            break;
+        }
+        s += j + 1;
+    }
+    if (brk >= 0) {
+        memmove(ip + brk + 7 - i, ip + brk, 2 * (i + 1 - brk));
+        for (j = 0; j < 7 - i; j++)
+            ip[brk + j] = 0;
+    }
+    for (j = 0; j < 8; j++) {
+        *a++ = ip[j] >> 8;
+        *a++ = ip[j];
+    }
+    if (need_v4 && inet_pton(AF_INET, (void *)s, a - 4) <= 0)
+        return 0;
+    return 1;
+}
+
+static int
+inet_addr(const char *p)
+{
+    struct in_addr a;
+    if (!inet_pton(AF_INET, p, &a))
+        return -1;
+    return a.s_addr;
+}
+/** In-enclave implementation of POSIX functions end **/
+
+static int
+textual_addr_to_sockaddr(const char *textual, int port, struct sockaddr_in *out)
+{
+    assert(textual);
+
+    out->sin_family = AF_INET;
+    out->sin_port = htons(port);
+    out->sin_addr.s_addr = inet_addr(textual);
+
+    return BHT_OK;
+}
+
+int
+socket(int domain, int type, int protocol)
 {
     int ret;
 
@@ -35,14 +253,15 @@ int socket(int domain, int type, int protocol)
     return ret;
 }
 
-int getsockopt(int sockfd, int level, int optname,
-               void *optval, socklen_t *optlen)
+int
+getsockopt(int sockfd, int level, int optname, void *optval, socklen_t *optlen)
 {
     int ret;
     unsigned int val_buf_size = *optlen;
 
-    if (ocall_getsockopt(&ret, sockfd, level, optname, optval,
-                         val_buf_size, (void *)optlen) != SGX_SUCCESS) {
+    if (ocall_getsockopt(&ret, sockfd, level, optname, optval, val_buf_size,
+                         (void *)optlen)
+        != SGX_SUCCESS) {
         TRACE_OCALL_FAIL();
         return -1;
     }
@@ -53,7 +272,8 @@ int getsockopt(int sockfd, int level, int optname,
     return ret;
 }
 
-ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
+ssize_t
+sendmsg(int sockfd, const struct msghdr *msg, int flags)
 {
     ssize_t ret;
     int i;
@@ -77,7 +297,7 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
     if (msg1 == NULL)
         return -1;
 
-    p = (char*)(uintptr_t)sizeof(struct msghdr);
+    p = (char *)(uintptr_t)sizeof(struct msghdr);
 
     if (msg->msg_name != NULL) {
         msg1->msg_name = p;
@@ -106,8 +326,8 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
         }
     }
 
-    if (ocall_sendmsg(&ret, sockfd, (void *)msg1, (uint32)total_size,
-                      flags) != SGX_SUCCESS) {
+    if (ocall_sendmsg(&ret, sockfd, (void *)msg1, (uint32)total_size, flags)
+        != SGX_SUCCESS) {
         TRACE_OCALL_FAIL();
         return -1;
     }
@@ -118,7 +338,8 @@ ssize_t sendmsg(int sockfd, const struct msghdr *msg, int flags)
     return ret;
 }
 
-ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags)
+ssize_t
+recvmsg(int sockfd, struct msghdr *msg, int flags)
 {
     ssize_t ret;
     int i;
@@ -144,7 +365,7 @@ ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags)
 
     memset(msg1, 0, total_size);
 
-    p = (char*)(uintptr_t)sizeof(struct msghdr);
+    p = (char *)(uintptr_t)sizeof(struct msghdr);
 
     if (msg->msg_name != NULL) {
         msg1->msg_name = p;
@@ -167,8 +388,8 @@ ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags)
         }
     }
 
-    if (ocall_recvmsg(&ret, sockfd, (void *)msg1, (uint32)total_size,
-                      flags) != SGX_SUCCESS) {
+    if (ocall_recvmsg(&ret, sockfd, (void *)msg1, (uint32)total_size, flags)
+        != SGX_SUCCESS) {
         TRACE_OCALL_FAIL();
         return -1;
     }
@@ -203,7 +424,8 @@ ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags)
     return ret;
 }
 
-int shutdown(int sockfd, int how)
+int
+shutdown(int sockfd, int how)
 {
     int ret;
 
@@ -218,5 +440,600 @@ int shutdown(int sockfd, int how)
     return ret;
 }
 
-#endif
+int
+os_socket_accept(bh_socket_t server_sock, bh_socket_t *sock, void *addr,
+                 unsigned int *addrlen)
 
+{
+    struct sockaddr addr_tmp;
+    unsigned int len = sizeof(struct sockaddr);
+
+    if (ocall_accept(sock, server_sock, &addr_tmp, &len, len) != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (*sock < 0) {
+        errno = get_errno();
+        return BHT_ERROR;
+    }
+
+    return BHT_OK;
+}
+int
+os_socket_bind(bh_socket_t socket, const char *host, int *port)
+{
+    struct sockaddr_in addr;
+    struct linger ling;
+    unsigned int socklen;
+    int ret;
+
+    assert(host);
+    assert(port);
+
+    ling.l_onoff = 1;
+    ling.l_linger = 0;
+
+    if (ocall_fcntl_long(&ret, socket, F_SETFD, FD_CLOEXEC) != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret < 0) {
+        goto fail;
+    }
+
+    if (ocall_setsockopt(&ret, socket, SOL_SOCKET, SO_LINGER, &ling,
+                         sizeof(ling))
+        != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret < 0) {
+        goto fail;
+    }
+
+    addr.sin_addr.s_addr = inet_addr(host);
+    addr.sin_port = htons(*port);
+    addr.sin_family = AF_INET;
+
+    if (ocall_bind(&ret, socket, &addr, sizeof(addr)) != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret < 0) {
+        goto fail;
+    }
+
+    socklen = sizeof(addr);
+
+    if (ocall_getsockname(&ret, socket, (void *)&addr, &socklen, socklen)
+        != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret == -1) {
+        goto fail;
+    }
+
+    *port = ntohs(addr.sin_port);
+
+    return BHT_OK;
+
+fail:
+    errno = get_errno();
+    return BHT_ERROR;
+}
+
+int
+os_socket_close(bh_socket_t socket)
+{
+    int ret;
+
+    if (ocall_close(&ret, socket) != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret == -1)
+        errno = get_errno();
+
+    return ret;
+}
+
+int
+os_socket_connect(bh_socket_t socket, const char *addr, int port)
+{
+    struct sockaddr_in addr_in = { 0 };
+    socklen_t addr_len = sizeof(struct sockaddr_in);
+    int ret = 0;
+
+    if ((ret = textual_addr_to_sockaddr(addr, port, &addr_in)) < 0) {
+        return ret;
+    }
+
+    if (ocall_connect(&ret, socket, &addr_in, addr_len) != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret == -1)
+        errno = get_errno();
+
+    return ret;
+}
+
+int
+os_socket_create(bh_socket_t *sock, bool is_ipv4, bool is_tcp)
+{
+    int af;
+
+    if (!sock) {
+        return BHT_ERROR;
+    }
+
+    if (is_ipv4) {
+        af = AF_INET;
+    }
+    else {
+        errno = ENOSYS;
+        return BHT_ERROR;
+    }
+
+    if (is_tcp) {
+        if (ocall_socket(sock, af, SOCK_STREAM, IPPROTO_TCP) != SGX_SUCCESS) {
+            TRACE_OCALL_FAIL();
+            return -1;
+        }
+    }
+    else {
+        if (ocall_socket(sock, af, SOCK_DGRAM, 0) != SGX_SUCCESS) {
+            TRACE_OCALL_FAIL();
+            return -1;
+        }
+    }
+
+    if (*sock == -1) {
+        errno = get_errno();
+        return BHT_ERROR;
+    }
+
+    return BHT_OK;
+}
+
+int
+os_socket_inet_network(bool is_ipv4, const char *cp, bh_ip_addr_buffer_t *out)
+{
+    if (!cp)
+        return BHT_ERROR;
+
+    if (is_ipv4) {
+        if (inet_pton(AF_INET, cp, &out->ipv4) != 1) {
+            return BHT_ERROR;
+        }
+        /* Note: ntohl(INADDR_NONE) == INADDR_NONE */
+        out->ipv4 = ntohl(out->ipv4);
+    }
+    else {
+        if (inet_pton(AF_INET6, cp, out->ipv6) != 1) {
+            return BHT_ERROR;
+        }
+        for (int i = 0; i < 8; i++) {
+            out->ipv6[i] = ntohs(out->ipv6[i]);
+        }
+    }
+
+    return BHT_OK;
+}
+
+int
+os_socket_listen(bh_socket_t socket, int max_client)
+{
+    int ret;
+
+    if (ocall_listen(&ret, socket, max_client) != SGX_SUCCESS) {
+        TRACE_OCALL_FAIL();
+        return -1;
+    }
+
+    if (ret == -1)
+        errno = get_errno();
+
+    return ret;
+}
+
+int
+os_socket_recv(bh_socket_t socket, void *buf, unsigned int len)
+{
+    int ret;
+
+    if (ocall_recv(&ret, socket, buf, len, 0) != SGX_SUCCESS) {
+        errno = ENOSYS;
+        return -1;
+    }
+
+    if (ret == -1)
+        errno = get_errno();
+
+    return ret;
+}
+
+int
+os_socket_recv_from(bh_socket_t socket, void *buf, unsigned int len, int flags,
+                    bh_sockaddr_t *src_addr)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_send(bh_socket_t socket, const void *buf, unsigned int len)
+{
+    int ret;
+
+    if (ocall_send(&ret, socket, buf, len, 0) != SGX_SUCCESS) {
+        errno = ENOSYS;
+        return -1;
+    }
+
+    if (ret == -1)
+        errno = get_errno();
+
+    return ret;
+}
+
+int
+os_socket_send_to(bh_socket_t socket, const void *buf, unsigned int len,
+                  int flags, const bh_sockaddr_t *dest_addr)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_shutdown(bh_socket_t socket)
+{
+    return shutdown(socket, O_RDWR);
+}
+
+int
+os_socket_addr_resolve(const char *host, const char *service,
+                       uint8_t *hint_is_tcp, uint8_t *hint_is_ipv4,
+                       bh_addr_info_t *addr_info, size_t addr_info_size,
+                       size_t *max_info_size)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_addr_local(bh_socket_t socket, bh_sockaddr_t *sockaddr)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_addr_remote(bh_socket_t socket, bh_sockaddr_t *sockaddr)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_send_timeout(bh_socket_t socket, uint64 timeout_us)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_send_timeout(bh_socket_t socket, uint64 *timeout_us)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_recv_timeout(bh_socket_t socket, uint64 timeout_us)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_recv_timeout(bh_socket_t socket, uint64 *timeout_us)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_send_buf_size(bh_socket_t socket, size_t bufsiz)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_send_buf_size(bh_socket_t socket, size_t *bufsiz)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_recv_buf_size(bh_socket_t socket, size_t bufsiz)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_recv_buf_size(bh_socket_t socket, size_t *bufsiz)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_keep_alive(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_keep_alive(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_reuse_addr(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_reuse_addr(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_reuse_port(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_reuse_port(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_linger(bh_socket_t socket, bool is_enabled, int linger_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_linger(bh_socket_t socket, bool *is_enabled, int *linger_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_tcp_no_delay(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_tcp_no_delay(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_tcp_quick_ack(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_tcp_quick_ack(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_tcp_keep_idle(bh_socket_t socket, uint32 time_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_tcp_keep_idle(bh_socket_t socket, uint32 *time_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_tcp_keep_intvl(bh_socket_t socket, uint32 time_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_tcp_keep_intvl(bh_socket_t socket, uint32 *time_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_tcp_fastopen_connect(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_tcp_fastopen_connect(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_ip_multicast_loop(bh_socket_t socket, bool ipv6, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_ip_multicast_loop(bh_socket_t socket, bool ipv6, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_ip_add_membership(bh_socket_t socket,
+                                bh_ip_addr_buffer_t *imr_multiaddr,
+                                uint32_t imr_interface, bool is_ipv6)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_ip_drop_membership(bh_socket_t socket,
+                                 bh_ip_addr_buffer_t *imr_multiaddr,
+                                 uint32_t imr_interface, bool is_ipv6)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_ip_ttl(bh_socket_t socket, uint8_t ttl_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_ip_ttl(bh_socket_t socket, uint8_t *ttl_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_ip_multicast_ttl(bh_socket_t socket, uint8_t ttl_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_ip_multicast_ttl(bh_socket_t socket, uint8_t *ttl_s)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_ipv6_only(bh_socket_t socket, bool option)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_ipv6_only(bh_socket_t socket, bool *option)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_set_broadcast(bh_socket_t socket, bool is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+int
+os_socket_get_broadcast(bh_socket_t socket, bool *is_enabled)
+{
+    errno = ENOSYS;
+
+    return BHT_ERROR;
+}
+
+#endif

@@ -24,11 +24,12 @@ extern "C" {
 #define VALUE_TYPE_EXTERNREF 0x6F
 #define VALUE_TYPE_VOID 0x40
 /* Used by AOT */
-#define VALUE_TYPE_I1  0x41
+#define VALUE_TYPE_I1 0x41
 /*  Used by loader to represent any type of i32/i64/f32/f64 */
 #define VALUE_TYPE_ANY 0x42
 
 #define DEFAULT_NUM_BYTES_PER_PAGE 65536
+#define DEFAULT_MAX_PAGES 65536
 
 #define NULL_REF (0xFFFFFFFF)
 
@@ -66,8 +67,8 @@ extern "C" {
 #endif
 
 #define SUB_SECTION_TYPE_MODULE 0
-#define SUB_SECTION_TYPE_FUNC   1
-#define SUB_SECTION_TYPE_LOCAL  2
+#define SUB_SECTION_TYPE_FUNC 1
+#define SUB_SECTION_TYPE_LOCAL 2
 
 #define IMPORT_KIND_FUNC 0
 #define IMPORT_KIND_TABLE 1
@@ -122,6 +123,7 @@ typedef struct WASMType {
     uint16 result_count;
     uint16 param_cell_num;
     uint16 ret_cell_num;
+    uint16 ref_count;
     /* types of params and results */
     uint8 types[1];
 } WASMType;
@@ -204,6 +206,10 @@ typedef struct WASMGlobalImport {
     WASMModule *import_module;
     WASMGlobal *import_global_linked;
 #endif
+#if WASM_ENABLE_FAST_JIT != 0
+    /* The data offset of current global in global data */
+    uint32 data_offset;
+#endif
 } WASMGlobalImport;
 
 typedef struct WASMImport {
@@ -254,12 +260,19 @@ struct WASMFunction {
     uint8 *consts;
     uint32 const_cell_num;
 #endif
+#if WASM_ENABLE_FAST_JIT != 0
+    void *fast_jit_jitted_code;
+#endif
 };
 
 struct WASMGlobal {
     uint8 type;
     bool is_mutable;
     InitializerExpression init_expr;
+#if WASM_ENABLE_FAST_JIT != 0
+    /* The data offset of current global in global data */
+    uint32 data_offset;
+#endif
 };
 
 typedef struct WASMExport {
@@ -305,6 +318,11 @@ typedef struct WASIArguments {
     uint32 map_dir_count;
     const char **env;
     uint32 env_count;
+    /* in CIDR noation */
+    const char **addr_pool;
+    uint32 addr_count;
+    const char **ns_lookup_pool;
+    uint32 ns_lookup_count;
     char **argv;
     uint32 argc;
     int stdio[3];
@@ -315,6 +333,35 @@ typedef struct StringNode {
     struct StringNode *next;
     char *str;
 } StringNode, *StringList;
+
+typedef struct BrTableCache {
+    struct BrTableCache *next;
+    /* Address of br_table opcode */
+    uint8 *br_table_op_addr;
+    uint32 br_count;
+    uint32 br_depths[1];
+} BrTableCache;
+
+#if WASM_ENABLE_DEBUG_INTERP != 0
+typedef struct WASMFastOPCodeNode {
+    struct WASMFastOPCodeNode *next;
+    uint64 offset;
+    uint8 orig_op;
+} WASMFastOPCodeNode;
+#endif
+
+#if WASM_ENABLE_LOAD_CUSTOM_SECTION != 0
+typedef struct WASMCustomSection {
+    struct WASMCustomSection *next;
+    /* Start address of the section name */
+    char *name_addr;
+    /* Length of the section name decoded from leb */
+    uint32 name_len;
+    /* Start address of the content (name len and name skipped) */
+    uint8 *content_addr;
+    uint32 content_len;
+} WASMCustomSection;
+#endif
 
 struct WASMModule {
     /* Module type, for module loaded from WASM bytecode binary,
@@ -393,16 +440,58 @@ struct WASMModule {
     bool possible_memory_grow;
 
     StringList const_str_list;
+#if WASM_ENABLE_FAST_INTERP == 0
+    bh_list br_table_cache_list_head;
+    bh_list *br_table_cache_list;
+#endif
 
 #if WASM_ENABLE_LIBC_WASI != 0
     WASIArguments wasi_args;
-    bool is_wasi_module;
+    bool import_wasi_api;
 #endif
 
 #if WASM_ENABLE_MULTI_MODULE != 0
     /* TODO: add mutex for mutli-thread? */
     bh_list import_module_list_head;
     bh_list *import_module_list;
+#endif
+#if WASM_ENABLE_DEBUG_INTERP != 0 || WASM_ENABLE_DEBUG_AOT != 0
+    bh_list fast_opcode_list;
+    uint8 *buf_code;
+    uint64 buf_code_size;
+#endif
+#if WASM_ENABLE_DEBUG_INTERP != 0 || WASM_ENABLE_DEBUG_AOT != 0 \
+    || WASM_ENABLE_FAST_JIT != 0
+    uint8 *load_addr;
+    uint64 load_size;
+#endif
+
+#if WASM_ENABLE_DEBUG_INTERP != 0
+    /**
+     * Count how many instances reference this module. When source
+     * debugging feature enabled, the debugger may modify the code
+     * section of the module, so we need to report a warning if user
+     * create several instances based on the same module
+     *
+     * Sub_instances created by lib-pthread or spawn API will not
+     * influence or check the ref count
+     */
+    uint32 ref_count;
+    korp_mutex ref_count_lock;
+#endif
+
+#if WASM_ENABLE_CUSTOM_NAME_SECTION != 0
+    const uint8 *name_section_buf;
+    const uint8 *name_section_buf_end;
+#endif
+
+#if WASM_ENABLE_LOAD_CUSTOM_SECTION != 0
+    WASMCustomSection *custom_section_list;
+#endif
+
+#if WASM_ENABLE_FAST_JIT != 0
+    /* point to JITed functions */
+    void **fast_jit_func_ptrs;
 #endif
 };
 
@@ -435,7 +524,7 @@ typedef struct WASMBranchBlock {
  * @return the aligned value
  */
 inline static unsigned
-align_uint (unsigned v, unsigned b)
+align_uint(unsigned v, unsigned b)
 {
     unsigned m = b - 1;
     return (v + m) & ~m;
@@ -448,7 +537,7 @@ inline static uint32
 wasm_string_hash(const char *str)
 {
     unsigned h = (unsigned)strlen(str);
-    const uint8 *p = (uint8*)str;
+    const uint8 *p = (uint8 *)str;
     const uint8 *end = p + h;
 
     while (p != end)
@@ -487,6 +576,8 @@ wasm_value_type_size(uint8 value_type)
         case VALUE_TYPE_V128:
             return sizeof(int64) * 2;
 #endif
+        case VALUE_TYPE_VOID:
+            return 0;
         default:
             bh_assert(0);
     }
@@ -496,25 +587,7 @@ wasm_value_type_size(uint8 value_type)
 inline static uint16
 wasm_value_type_cell_num(uint8 value_type)
 {
-    if (value_type == VALUE_TYPE_VOID)
-        return 0;
-    else if (value_type == VALUE_TYPE_I32 || value_type == VALUE_TYPE_F32
-#if WASM_ENABLE_REF_TYPES != 0
-             || value_type == VALUE_TYPE_FUNCREF
-             || value_type == VALUE_TYPE_EXTERNREF
-#endif
-    )
-        return 1;
-    else if (value_type == VALUE_TYPE_I64 || value_type == VALUE_TYPE_F64)
-        return 2;
-#if WASM_ENABLE_SIMD != 0
-    else if (value_type == VALUE_TYPE_V128)
-        return 4;
-#endif
-    else {
-        bh_assert(0);
-    }
-    return 0;
+    return wasm_value_type_size(value_type) / 4;
 }
 
 inline static uint32
@@ -527,15 +600,32 @@ wasm_get_cell_num(const uint8 *types, uint32 type_count)
     return cell_num;
 }
 
+#if WASM_ENABLE_REF_TYPES != 0
+inline static uint16
+wasm_value_type_cell_num_outside(uint8 value_type)
+{
+    if (VALUE_TYPE_EXTERNREF == value_type) {
+        return sizeof(uintptr_t) / sizeof(uint32);
+    }
+    else {
+        return wasm_value_type_cell_num(value_type);
+    }
+}
+#endif
+
 inline static bool
 wasm_type_equal(const WASMType *type1, const WASMType *type2)
 {
+    if (type1 == type2) {
+        return true;
+    }
     return (type1->param_count == type2->param_count
             && type1->result_count == type2->result_count
             && memcmp(type1->types, type2->types,
-                      (uint32)(type1->param_count
-                               + type1->result_count)) == 0)
-        ? true : false;
+                      (uint32)(type1->param_count + type1->result_count))
+                   == 0)
+               ? true
+               : false;
 }
 
 inline static uint32
@@ -548,12 +638,12 @@ wasm_get_smallest_type_idx(WASMType **types, uint32 type_count,
         if (wasm_type_equal(types[cur_type_idx], types[i]))
             return i;
     }
+    (void)type_count;
     return cur_type_idx;
 }
 
 static inline uint32
-block_type_get_param_types(BlockType *block_type,
-                           uint8 **p_param_types)
+block_type_get_param_types(BlockType *block_type, uint8 **p_param_types)
 {
     uint32 param_count = 0;
     if (!block_type->is_value_type) {
@@ -563,15 +653,14 @@ block_type_get_param_types(BlockType *block_type,
     }
     else {
         *p_param_types = NULL;
-        param_count  = 0;
+        param_count = 0;
     }
 
     return param_count;
 }
 
 static inline uint32
-block_type_get_result_types(BlockType *block_type,
-                            uint8 **p_result_types)
+block_type_get_result_types(BlockType *block_type, uint8 **p_result_types)
 {
     uint32 result_count = 0;
     if (block_type->is_value_type) {

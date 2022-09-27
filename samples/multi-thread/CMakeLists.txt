@@ -15,13 +15,37 @@ set(CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
 set(CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "")
 
 # WAMR features switch
-set(WAMR_BUILD_TARGET "X86_64")
+
+# Set WAMR_BUILD_TARGET, currently values supported:
+# "X86_64", "AMD_64", "X86_32", "AARCH64[sub]", "ARM[sub]", "THUMB[sub]",
+# "MIPS", "XTENSA", "RISCV64[sub]", "RISCV32[sub]"
+if (NOT DEFINED WAMR_BUILD_TARGET)
+  if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)")
+    set (WAMR_BUILD_TARGET "AARCH64")
+  elseif (CMAKE_SYSTEM_PROCESSOR STREQUAL "riscv64")
+    set (WAMR_BUILD_TARGET "RISCV64")
+  elseif (CMAKE_SIZEOF_VOID_P EQUAL 8)
+    # Build as X86_64 by default in 64-bit platform
+    set (WAMR_BUILD_TARGET "X86_64")
+  elseif (CMAKE_SIZEOF_VOID_P EQUAL 4)
+    # Build as X86_32 by default in 32-bit platform
+    set (WAMR_BUILD_TARGET "X86_32")
+  else ()
+    message(SEND_ERROR "Unsupported build target platform!")
+  endif ()
+endif ()
+
+if (NOT CMAKE_BUILD_TYPE)
+  set (CMAKE_BUILD_TYPE Release)
+endif ()
+
 set(WAMR_BUILD_INTERP 1)
 set(WAMR_BUILD_AOT 1)
 set(WAMR_BUILD_JIT 0)
 set(WAMR_BUILD_LIBC_BUILTIN 1)
 set(WAMR_BUILD_FAST_INTERP 1)
 set(WAMR_BUILD_LIB_PTHREAD 1)
+set(WAMR_BUILD_LIB_PTHREAD_SEMAPHORE 1)
 
 # compiling and linking flags
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie -fPIE")
@@ -49,5 +73,5 @@ set (RUNTIME_SOURCE_ALL
     ${UNCOMMON_SHARED_SOURCE}
 )
 add_executable (iwasm ${RUNTIME_SOURCE_ALL})
-target_link_libraries(iwasm vmlib -lpthread -lm)
+target_link_libraries(iwasm vmlib -lpthread -lm -ldl)
 

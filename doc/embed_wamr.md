@@ -1,8 +1,32 @@
 Embedding WAMR guideline
 =====================================
 
+**Note**: This document is about how to embed WAMR into C/C++ host applications, for other languages, please refer to: [Embed WAMR into Python](../language-bindings/go), [Embed WAMR into Go](../language-bindings/go).
 
-**Note**: All the embedding APIs supported by the runtime are defined under folder [core/iwasm/include](../core/iwasm/include). The API details are available in the header files.
+All the embedding APIs supported by the runtime are defined under folder [core/iwasm/include](../core/iwasm/include). The API details are available in the header files.
+
+## Embed WAMR into developer's project
+
+WAMR is designed to be easy embeddable in any project, a typical way of building WAMR is to use cmake, developer can configure features by setting cmake variables and then include the script `runtime_lib.cmake` under folder [build-scripts](../build-scripts) in his CMakeList.txt, for example:
+``` cmake
+set (WAMR_BUILD_PLATFORM "linux")
+set (WAMR_BUILD_TARGET "X86_64")
+set (WAMR_BUILD_INTERP 1)
+set (WAMR_BUILD_FAST_INTERP 1)
+set (WAMR_BUILD_AOT 1)
+set (WAMR_BUILD_LIBC_BUILTIN 1)
+set (WAMR_BUILD_LIBC_WASI 1)
+set (WAMR_BUILD_SIMD 1)
+set (WAMR_ROOT_DIR path/to/wamr/root)
+
+include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
+add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
+
+target_link_libraries (your_project vmlib)
+```
+Examples can be found in [CMakeLists.txt of linux platform](../product-mini/platforms/linux/CMakeLists.txt) and [other platforms](../product-mini/platforms). The available features to configure can be found in [Build WAMR vmcore](./build_wamr.md#wamr-vmcore-cmake-building-configurations).
+
+Developer can also use Makefile to embed WAMR, by defining macros and including directories, and adding the source files, examples can be found in [makefile of alios-things platform](../product-mini/platforms/alios-things/aos.mk) and [makefile of nuttx platform](../product-mini/platforms/nuttx/wamr.mk).
 
 ## The runtime initialization
 
@@ -87,7 +111,7 @@ There are several ways to call WASM function:
 1. Function call with parameters in an array of 32 bits elements and size:
 
 ```c
-  unit32 argv[2];
+  uint32 argv[2];
 
   /* arguments are always transferred in 32-bit element */
   argv[0] = 8;
@@ -106,11 +130,11 @@ There are several ways to call WASM function:
 The parameters are transferred in an array of 32 bits elements. For parameters that occupy 4 or fewer bytes, each parameter can be a single array element. For parameters in types like double or int64, each parameter will take two array elements. The function return value will be sent back in the first one or two elements of the array according to the value type. See the sample code below:
 
 ```c
-  unit32 argv[6];
+  uint32 argv[6];
   char arg1 = 'a';
   int arg2 = 10;
   double arg3 = 1.0;
-  int 64 arg4 = 100;
+  int64 arg4 = 100;
   double ret;
 
   argv[0] = arg1;
@@ -138,7 +162,7 @@ The parameters are transferred in an array of 32 bits elements. For parameters t
 2. Function call with results and arguments both in `wasm_val_t` struct and size:
 
 ```c
-  unit32 num_args = 1, num_results = 1;
+  uint32 num_args = 1, num_results = 1;
   wasm_val_t args[1], results[1];
 
   /* set the argument type and value */
@@ -159,7 +183,7 @@ The parameters are transferred in an array of 32 bits elements. For parameters t
 3. Function call with variant argument support:
 
 ```c
-  unit32 num_args = 1, num_results = 1;
+  uint32 num_args = 1, num_results = 1;
   wasm_val_t results[1];
 
   /* call the WASM function */
@@ -200,7 +224,7 @@ wasm_runtime_module_malloc(wasm_module_inst_t module_inst,
  * size: the size of buffer to be allocated and copy data
  */
 uint32_t
-wasm_runtime_module_dup_data(WASMModuleInstanceCommon *module_inst,
+wasm_runtime_module_dup_data(wasm_module_inst_t module_inst,
                              const char *src, uint32_t size);
 
 /* free the memory allocated from module memory space */
@@ -216,7 +240,7 @@ uint32_t buffer_for_wasm;
 
 buffer_for_wasm = wasm_runtime_module_malloc(module_inst, 100, &buffer);
 if (buffer_for_wasm != 0) {
-    unit32 argv[2];
+    uint32 argv[2];
     strncpy(buffer, "hello", 100); /* use native address for accessing in runtime */
     argv[0] = buffer_for_wasm;     /* pass the buffer address for WASM space */
     argv[1] = 100;                 /* the size of buffer */

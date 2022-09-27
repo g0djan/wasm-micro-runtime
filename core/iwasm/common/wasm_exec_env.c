@@ -12,16 +12,23 @@
 #include "../aot/aot_runtime.h"
 #endif
 
+#if WASM_ENABLE_AOT != 0
+#include "aot_runtime.h"
+#endif
+
 #if WASM_ENABLE_THREAD_MGR != 0
 #include "../libraries/thread-mgr/thread_manager.h"
+#if WASM_ENABLE_DEBUG_INTERP != 0
+#include "../libraries/debug-engine/debug_engine.h"
+#endif
 #endif
 
 WASMExecEnv *
 wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
                               uint32 stack_size)
 {
-    uint64 total_size = offsetof(WASMExecEnv, wasm_stack.s.bottom)
-                        + (uint64)stack_size;
+    uint64 total_size =
+        offsetof(WASMExecEnv, wasm_stack.s.bottom) + (uint64)stack_size;
     WASMExecEnv *exec_env;
 
     if (total_size >= UINT32_MAX
@@ -42,6 +49,11 @@ wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
 
     if (os_cond_init(&exec_env->wait_cond) != 0)
         goto fail3;
+
+#if WASM_ENABLE_DEBUG_INTERP != 0
+    if (!(exec_env->current_status = wasm_cluster_create_exenv_status()))
+        goto fail4;
+#endif
 #endif
 
     exec_env->module_inst = module_inst;
@@ -50,12 +62,25 @@ wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
         exec_env->wasm_stack.s.bottom + stack_size;
     exec_env->wasm_stack.s.top = exec_env->wasm_stack.s.bottom;
 
+#if WASM_ENABLE_AOT != 0
+    if (module_inst->module_type == Wasm_Module_AoT) {
+        AOTModuleInstance *i = (AOTModuleInstance *)module_inst;
+        AOTModule *m = (AOTModule *)i->aot_module.ptr;
+        exec_env->native_symbol = m->native_symbol_list;
+    }
+#endif
+
 #if WASM_ENABLE_MEMORY_TRACING != 0
     wasm_runtime_dump_exec_env_mem_consumption(exec_env);
 #endif
+
     return exec_env;
 
 #if WASM_ENABLE_THREAD_MGR != 0
+#if WASM_ENABLE_DEBUG_INTERP != 0
+fail4:
+    os_cond_destroy(&exec_env->wait_cond);
+#endif
 fail3:
     os_mutex_destroy(&exec_env->wait_lock);
 fail2:
@@ -74,6 +99,9 @@ wasm_exec_env_destroy_internal(WASMExecEnv *exec_env)
 #if WASM_ENABLE_THREAD_MGR != 0
     os_mutex_destroy(&exec_env->wait_lock);
     os_cond_destroy(&exec_env->wait_cond);
+#if WASM_ENABLE_DEBUG_INTERP != 0
+    wasm_cluster_destroy_exenv_status(exec_env->current_status);
+#endif
 #endif
 #if WASM_ENABLE_AOT != 0
     wasm_runtime_free(exec_env->argv_buf);
@@ -94,22 +122,23 @@ wasm_exec_env_create(struct WASMModuleInstanceCommon *module_inst,
     if (!exec_env)
         return NULL;
 
-    /* Set the aux_stack_boundary and aux_stack_bottom */
 #if WASM_ENABLE_INTERP != 0
+    /* Set the aux_stack_boundary and aux_stack_bottom */
     if (module_inst->module_type == Wasm_Module_Bytecode) {
         WASMModule *module = ((WASMModuleInstance *)module_inst)->module;
         exec_env->aux_stack_bottom.bottom = module->aux_stack_bottom;
-        exec_env->aux_stack_boundary.boundary = module->aux_stack_bottom
-                                                - module->aux_stack_size;
+        exec_env->aux_stack_boundary.boundary =
+            module->aux_stack_bottom - module->aux_stack_size;
     }
 #endif
 #if WASM_ENABLE_AOT != 0
+    /* Set the aux_stack_boundary and aux_stack_bottom */
     if (module_inst->module_type == Wasm_Module_AoT) {
         AOTModule *module =
             (AOTModule *)(((AOTModuleInstance *)module_inst)->aot_module.ptr);
         exec_env->aux_stack_bottom.bottom = module->aux_stack_bottom;
-        exec_env->aux_stack_boundary.boundary = module->aux_stack_bottom
-                                                - module->aux_stack_size;
+        exec_env->aux_stack_boundary.boundary =
+            module->aux_stack_bottom - module->aux_stack_size;
     }
 #endif
 
@@ -119,7 +148,8 @@ wasm_exec_env_create(struct WASMModuleInstanceCommon *module_inst,
         wasm_exec_env_destroy_internal(exec_env);
         return NULL;
     }
-#endif
+#endif /* end of WASM_ENABLE_THREAD_MGR */
+
     return exec_env;
 }
 
@@ -131,9 +161,15 @@ wasm_exec_env_destroy(WASMExecEnv *exec_env)
     WASMCluster *cluster = wasm_exec_env_get_cluster(exec_env);
     if (cluster) {
         wasm_cluster_terminate_all_except_self(cluster, exec_env);
+#if WASM_ENABLE_DEBUG_INTERP != 0
+        /* Must fire exit event after other threads exits, otherwise
+           the stopped thread will be overrided by other threads */
+        wasm_cluster_thread_exited(exec_env);
+#endif
         wasm_cluster_del_exec_env(cluster, exec_env);
     }
-#endif
+#endif /* end of WASM_ENABLE_THREAD_MGR */
+
     wasm_exec_env_destroy_internal(exec_env);
 }
 
@@ -144,11 +180,19 @@ wasm_exec_env_get_module_inst(WASMExecEnv *exec_env)
 }
 
 void
+wasm_exec_env_set_module_inst(WASMExecEnv *exec_env,
+                              WASMModuleInstanceCommon *const module_inst)
+{
+    exec_env->module_inst = module_inst;
+}
+
+void
 wasm_exec_env_set_thread_info(WASMExecEnv *exec_env)
 {
+    uint8 *stack_boundary = os_thread_get_stack_boundary();
     exec_env->handle = os_self_thread();
-    exec_env->native_stack_boundary = os_thread_get_stack_boundary()
-                                      + RESERVED_BYTES_TO_NATIVE_STACK_BOUNDARY;
+    exec_env->native_stack_boundary =
+        stack_boundary ? stack_boundary + WASM_STACK_GUARD_SIZE : NULL;
 }
 
 #if WASM_ENABLE_THREAD_MGR != 0
@@ -186,4 +230,3 @@ wasm_exec_env_pop_jmpbuf(WASMExecEnv *exec_env)
     return NULL;
 }
 #endif
-

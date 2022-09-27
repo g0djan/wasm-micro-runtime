@@ -15,7 +15,8 @@ typedef struct ThreadArgs {
     int length;
 } ThreadArgs;
 
-void *thread(void* arg)
+void *
+thread(void *arg)
 {
     ThreadArgs *thread_arg = (ThreadArgs *)arg;
     wasm_exec_env_t exec_env = thread_arg->exec_env;
@@ -23,9 +24,15 @@ void *thread(void* arg)
     wasm_function_inst_t func;
     uint32 argv[2];
 
+    if (!wasm_runtime_init_thread_env()) {
+        printf("failed to initialize thread environment");
+        return NULL;
+    }
+
     func = wasm_runtime_lookup_function(module_inst, "sum", NULL);
     if (!func) {
         printf("failed to lookup function sum");
+        wasm_runtime_destroy_thread_env();
         return NULL;
     }
     argv[0] = thread_arg->start;
@@ -34,13 +41,16 @@ void *thread(void* arg)
     /* call the WASM function */
     if (!wasm_runtime_call_wasm(exec_env, func, 2, argv)) {
         printf("%s\n", wasm_runtime_get_exception(module_inst));
+        wasm_runtime_destroy_thread_env();
         return NULL;
     }
 
+    wasm_runtime_destroy_thread_env();
     return (void *)(uintptr_t)argv[0];
 }
 
-void *wamr_thread_cb(wasm_exec_env_t exec_env, void *arg)
+void *
+wamr_thread_cb(wasm_exec_env_t exec_env, void *arg)
 {
     ThreadArgs *thread_arg = (ThreadArgs *)arg;
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
@@ -64,7 +74,8 @@ void *wamr_thread_cb(wasm_exec_env_t exec_env, void *arg)
     return (void *)(uintptr_t)argv[0];
 }
 
-int main(int argc, char *argv[])
+int
+main(int argc, char *argv[])
 {
     char *wasm_file = "wasm-apps/test.wasm";
     uint8 *wasm_file_buf = NULL;
@@ -97,7 +108,7 @@ int main(int argc, char *argv[])
 
     /* load WASM byte buffer from WASM bin file */
     if (!(wasm_file_buf =
-            (uint8 *)bh_read_file_to_buffer(wasm_file, &wasm_file_size)))
+              (uint8 *)bh_read_file_to_buffer(wasm_file, &wasm_file_size)))
         goto fail1;
 
     /* load WASM module */
@@ -109,15 +120,15 @@ int main(int argc, char *argv[])
 
     /* instantiate the module */
     if (!(wasm_module_inst =
-            wasm_runtime_instantiate(wasm_module, stack_size, heap_size,
-                                     error_buf, sizeof(error_buf)))) {
+              wasm_runtime_instantiate(wasm_module, stack_size, heap_size,
+                                       error_buf, sizeof(error_buf)))) {
         printf("%s\n", error_buf);
         goto fail3;
     }
 
     /* Create the first exec_env */
     if (!(exec_env =
-        wasm_runtime_create_exec_env(wasm_module_inst, stack_size))) {
+              wasm_runtime_create_exec_env(wasm_module_inst, stack_size))) {
         printf("failed to create exec_env\n");
         goto fail4;
     }
@@ -190,8 +201,9 @@ int main(int argc, char *argv[])
         thread_arg[i].length = 10;
 
         /* No need to spawn exec_env manually */
-        if (0 != wasm_runtime_spawn_thread(exec_env, &wasm_tid[i],
-                                           wamr_thread_cb, &thread_arg[i])) {
+        if (0
+            != wasm_runtime_spawn_thread(exec_env, &wasm_tid[i], wamr_thread_cb,
+                                         &thread_arg[i])) {
             printf("failed to spawn thread.\n");
             break;
         }
@@ -202,7 +214,7 @@ int main(int argc, char *argv[])
     sum = 0;
     memset(result, 0, sizeof(uint32) * THREAD_NUM);
     for (i = 0; i < threads_created; i++) {
-        wasm_runtime_join_thread(wasm_tid[i], (void**)&result[i]);
+        wasm_runtime_join_thread(wasm_tid[i], (void **)&result[i]);
         sum += result[i];
         /* No need to destroy the spawned exec_env */
     }

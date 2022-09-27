@@ -1,5 +1,7 @@
-// Part of the Wasmtime Project, under the Apache License v2.0 with LLVM Exceptions.
-// See https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE for license information.
+// Part of the Wasmtime Project, under the Apache License v2.0 with LLVM
+// Exceptions. See
+// https://github.com/bytecodealliance/wasmtime/blob/main/LICENSE for license
+// information.
 //
 // Significant parts of this file are derived from cloudabi-utils. See
 // https://github.com/bytecodealliance/wasmtime/blob/main/lib/wasi/sandboxed-system-primitives/src/LICENSE
@@ -14,7 +16,8 @@
 
 #include <stdlib.h>
 
-#if defined(__FreeBSD__) || defined(__APPLE__) || (defined(ANDROID) && __ANDROID_API__ < 28)
+#if defined(__FreeBSD__) || defined(__APPLE__) \
+    || (defined(ANDROID) && __ANDROID_API__ < 28)
 #define CONFIG_HAS_ARC4RANDOM_BUF 1
 #else
 #define CONFIG_HAS_ARC4RANDOM_BUF 0
@@ -22,10 +25,9 @@
 
 // On Linux, prefer to use getrandom, though it isn't available in
 // GLIBC before 2.25.
-#if defined(__linux__) && \
-    (!defined(__GLIBC__) || \
-     __GLIBC__ > 2 || \
-     (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25))
+#if (defined(__linux__) || defined(ESP_PLATFORM)) \
+    && (!defined(__GLIBC__) || __GLIBC__ > 2      \
+        || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25))
 #define CONFIG_HAS_GETRANDOM 1
 #else
 #define CONFIG_HAS_GETRANDOM 0
@@ -37,31 +39,38 @@
 #define CONFIG_HAS_CAP_ENTER 0
 #endif
 
-#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__EMSCRIPTEN__)
+#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(__EMSCRIPTEN__) \
+    && !defined(ESP_PLATFORM)
 #define CONFIG_HAS_CLOCK_NANOSLEEP 1
 #else
 #define CONFIG_HAS_CLOCK_NANOSLEEP 0
 #endif
 
-#if !defined(__APPLE__) && !defined(__FreeBSD__)
+#if !defined(__APPLE__) && !defined(__FreeBSD__) && !defined(ESP_PLATFORM)
 #define CONFIG_HAS_FDATASYNC 1
 #else
 #define CONFIG_HAS_FDATASYNC 0
 #endif
 
+/*
+ * For NuttX, CONFIG_HAS_ISATTY is provided by its platform header.
+ * (platform_internal.h)
+ */
+#ifndef __NuttX__
 #ifndef __CloudABI__
 #define CONFIG_HAS_ISATTY 1
 #else
 #define CONFIG_HAS_ISATTY 0
 #endif
+#endif
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(ESP_PLATFORM)
 #define CONFIG_HAS_POSIX_FALLOCATE 1
 #else
 #define CONFIG_HAS_POSIX_FALLOCATE 0
 #endif
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(ESP_PLATFORM)
 #define CONFIG_HAS_PREADV 1
 #else
 #define CONFIG_HAS_PREADV 0
@@ -79,7 +88,7 @@
 #define CONFIG_HAS_PTHREAD_CONDATTR_SETCLOCK 0
 #endif
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(ESP_PLATFORM)
 #define CONFIG_HAS_PWRITEV 1
 #else
 #define CONFIG_HAS_PWRITEV 0
@@ -101,6 +110,12 @@
 #define CONFIG_HAS_STD_ATOMIC 1
 #else
 #define CONFIG_HAS_STD_ATOMIC 0
+#endif
+
+#if !defined(__NuttX__)
+#define CONFIG_HAS_D_INO 1
+#else
+#define CONFIG_HAS_D_INO 0
 #endif
 
 #endif
