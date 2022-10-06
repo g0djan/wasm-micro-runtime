@@ -4,14 +4,14 @@
  */
         .text
         .align  2
-#if !defined(BH_PLATFORM_DARWIN) && !defined(BH_PLATFORM_TVOS)
-         .globl invokeNative
-         .type  invokeNative, function
- invokeNative:
- #else
-         .globl _invokeNative
- _invokeNative:
-#endif /* end of BH_PLATFORM_DARWIN || BH_PLATFORM_TVOS */
+#ifndef BH_PLATFORM_DARWIN
+        .globl invokeNative
+        .type  invokeNative, function
+invokeNative:
+#else
+        .globl _invokeNative
+_invokeNative:
+#endif /* end of BH_PLATFORM_DARWIN */
 
 /*
  * Arguments passed in:
