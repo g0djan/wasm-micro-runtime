@@ -27,8 +27,24 @@ print_help()
     printf("  -v=n                   Set log verbose level (0 to 5, default is 2) larger\n"
            "                         level with more log\n");
 #endif
-    printf("  --stack-size=n         Set maximum stack size in bytes, default is 16 KB\n");
+#if WASM_ENABLE_INTERP != 0
+    printf("  --interp               Run the wasm app with interpreter mode\n");
+#endif
+#if WASM_ENABLE_FAST_JIT != 0
+    printf("  --fast-jit             Run the wasm app with fast jit mode\n");
+#endif
+#if WASM_ENABLE_JIT != 0
+    printf("  --llvm-jit             Run the wasm app with llvm jit mode\n");
+#endif
+#if WASM_ENABLE_JIT != 0 && WASM_ENABLE_FAST_JIT != 0 && WASM_ENABLE_LAZY_JIT != 0
+    printf("  --multi-tier-jit       Run the wasm app with multi-tier jit mode\n");
+#endif
+    printf("  --stack-size=n         Set maximum stack size in bytes, default is 64 KB\n");
     printf("  --heap-size=n          Set maximum heap size in bytes, default is 16 KB\n");
+#if WASM_ENABLE_JIT != 0
+    printf("  --llvm-jit-size-level=n  Set LLVM JIT size level, default is 3\n");
+    printf("  --llvm-jit-opt-level=n   Set LLVM JIT optimization level, default is 3\n");
+#endif
     printf("  --repl                 Start a very simple REPL (read-eval-print-loop) mode\n"
            "                         that runs commands in the form of `FUNC ARG...`\n");
 #if WASM_ENABLE_LIBC_WASI != 0
@@ -43,7 +59,7 @@ print_help()
     printf("  --module-path=<path>   Indicate a module search path. default is current\n"
            "                         directory('./')\n");
 #endif
-#if WASM_ENABLE_LIB_PTHREAD != 0
+#if WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
     printf("  --max-threads=n        Set maximum thread number per cluster, default is 4\n");
 #endif
 #if WASM_ENABLE_DEBUG_INTERP != 0
@@ -55,7 +71,7 @@ print_help()
 }
 /* clang-format on */
 
-static void *
+static const void *
 app_instance_main(wasm_module_inst_t module_inst)
 {
     const char *exception;
@@ -63,17 +79,17 @@ app_instance_main(wasm_module_inst_t module_inst)
     wasm_application_execute_main(module_inst, app_argc, app_argv);
     if ((exception = wasm_runtime_get_exception(module_inst)))
         printf("%s\n", exception);
-    return NULL;
+    return exception;
 }
 
-static void *
+static const void *
 app_instance_func(wasm_module_inst_t module_inst, const char *func_name)
 {
     wasm_application_execute_func(module_inst, func_name, app_argc - 1,
                                   app_argv + 1);
     /* The result of wasm function or exception info was output inside
        wasm_application_execute_func(), here we don't output them again. */
-    return NULL;
+    return wasm_runtime_get_exception(module_inst);
 }
 
 /**
@@ -174,10 +190,8 @@ validate_env_str(char *env)
 }
 #endif
 
-#define USE_GLOBAL_HEAP_BUF 0
-
-#if USE_GLOBAL_HEAP_BUF != 0
-static char global_heap_buf[10 * 1024 * 1024] = { 0 };
+#if WASM_ENABLE_GLOBAL_HEAP_POOL != 0
+static char global_heap_buf[WASM_GLOBAL_HEAP_SIZE] = { 0 };
 #endif
 
 #if WASM_ENABLE_MULTI_MODULE != 0
@@ -229,9 +243,14 @@ main(int argc, char *argv[])
     const char *func_name = NULL;
     uint8 *wasm_file_buf = NULL;
     uint32 wasm_file_size;
-    uint32 stack_size = 16 * 1024, heap_size = 16 * 1024;
+    uint32 stack_size = 64 * 1024, heap_size = 16 * 1024;
+#if WASM_ENABLE_JIT != 0
+    uint32 llvm_jit_size_level = 3;
+    uint32 llvm_jit_opt_level = 3;
+#endif
     wasm_module_t wasm_module = NULL;
     wasm_module_inst_t wasm_module_inst = NULL;
+    RunningMode running_mode = 0;
     RuntimeInitArgs init_args;
     char error_buf[128] = { 0 };
 #if WASM_ENABLE_LOG != 0
@@ -259,6 +278,26 @@ main(int argc, char *argv[])
             }
             func_name = argv[0];
         }
+#if WASM_ENABLE_INTERP != 0
+        else if (!strcmp(argv[0], "--interp")) {
+            running_mode = Mode_Interp;
+        }
+#endif
+#if WASM_ENABLE_FAST_JIT != 0
+        else if (!strcmp(argv[0], "--fast-jit")) {
+            running_mode = Mode_Fast_JIT;
+        }
+#endif
+#if WASM_ENABLE_JIT != 0
+        else if (!strcmp(argv[0], "--llvm-jit")) {
+            running_mode = Mode_LLVM_JIT;
+        }
+#endif
+#if WASM_ENABLE_JIT != 0 && WASM_ENABLE_FAST_JIT != 0
+        else if (!strcmp(argv[0], "--multi-tier-jit")) {
+            running_mode = Mode_Multi_Tier_JIT;
+        }
+#endif
 #if WASM_ENABLE_LOG != 0
         else if (!strncmp(argv[0], "-v=", 3)) {
             log_verbose_level = atoi(argv[0] + 3);
@@ -279,6 +318,38 @@ main(int argc, char *argv[])
                 return print_help();
             heap_size = atoi(argv[0] + 12);
         }
+#if WASM_ENABLE_JIT != 0
+        else if (!strncmp(argv[0], "--llvm-jit-size-level=", 22)) {
+            if (argv[0][22] == '\0')
+                return print_help();
+            llvm_jit_size_level = atoi(argv[0] + 22);
+            if (llvm_jit_size_level < 1) {
+                printf("LLVM JIT size level shouldn't be smaller than 1, "
+                       "setting it to 1\n");
+                llvm_jit_size_level = 1;
+            }
+            else if (llvm_jit_size_level > 3) {
+                printf("LLVM JIT size level shouldn't be greater than 3, "
+                       "setting it to 3\n");
+                llvm_jit_size_level = 3;
+            }
+        }
+        else if (!strncmp(argv[0], "--llvm-jit-opt-level=", 21)) {
+            if (argv[0][21] == '\0')
+                return print_help();
+            llvm_jit_opt_level = atoi(argv[0] + 21);
+            if (llvm_jit_opt_level < 1) {
+                printf("LLVM JIT opt level shouldn't be smaller than 1, "
+                       "setting it to 1\n");
+                llvm_jit_opt_level = 1;
+            }
+            else if (llvm_jit_opt_level > 3) {
+                printf("LLVM JIT opt level shouldn't be greater than 3, "
+                       "setting it to 3\n");
+                llvm_jit_opt_level = 3;
+            }
+        }
+#endif
 #if WASM_ENABLE_LIBC_WASI != 0
         else if (!strncmp(argv[0], "--dir=", 6)) {
             if (argv[0][6] == '\0')
@@ -319,7 +390,7 @@ main(int argc, char *argv[])
             }
         }
 #endif
-#if WASM_ENABLE_LIB_PTHREAD != 0
+#if WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
         else if (!strncmp(argv[0], "--max-threads=", 14)) {
             if (argv[0][14] == '\0')
                 return print_help();
@@ -359,7 +430,8 @@ main(int argc, char *argv[])
 
     memset(&init_args, 0, sizeof(RuntimeInitArgs));
 
-#if USE_GLOBAL_HEAP_BUF != 0
+    init_args.running_mode = running_mode;
+#if WASM_ENABLE_GLOBAL_HEAP_POOL != 0
     init_args.mem_alloc_type = Alloc_With_Pool;
     init_args.mem_alloc_option.pool.heap_buf = global_heap_buf;
     init_args.mem_alloc_option.pool.heap_size = sizeof(global_heap_buf);
@@ -368,6 +440,11 @@ main(int argc, char *argv[])
     init_args.mem_alloc_option.allocator.malloc_func = malloc;
     init_args.mem_alloc_option.allocator.realloc_func = realloc;
     init_args.mem_alloc_option.allocator.free_func = free;
+#endif
+
+#if WASM_ENABLE_JIT != 0
+    init_args.llvm_jit_size_level = llvm_jit_size_level;
+    init_args.llvm_jit_opt_level = llvm_jit_opt_level;
 #endif
 
 #if WASM_ENABLE_DEBUG_INTERP != 0
@@ -453,14 +530,29 @@ main(int argc, char *argv[])
     }
 #endif
 
-    if (is_repl_mode)
-        app_instance_repl(wasm_module_inst);
-    else if (func_name)
-        app_instance_func(wasm_module_inst, func_name);
-    else
-        app_instance_main(wasm_module_inst);
-
     ret = 0;
+    if (is_repl_mode) {
+        app_instance_repl(wasm_module_inst);
+    }
+    else if (func_name) {
+        if (app_instance_func(wasm_module_inst, func_name)) {
+            /* got an exception */
+            ret = 1;
+        }
+    }
+    else {
+        if (app_instance_main(wasm_module_inst)) {
+            /* got an exception */
+            ret = 1;
+        }
+    }
+
+#if WASM_ENABLE_LIBC_WASI != 0
+    if (ret == 0) {
+        /* propagate wasi exit code. */
+        ret = wasm_runtime_get_wasi_exit_code(wasm_module_inst);
+    }
+#endif
 
 #if WASM_ENABLE_DEBUG_INTERP != 0
 fail4:
@@ -483,10 +575,5 @@ fail1:
     /* destroy runtime environment */
     wasm_runtime_destroy();
 
-#if WASM_ENABLE_SPEC_TEST != 0
-    (void)ret;
-    return 0;
-#else
     return ret;
-#endif
 }

@@ -145,6 +145,19 @@ WASM_API_EXTERN own wasm_config_t* wasm_config_new(void);
 
 WASM_DECLARE_OWN(engine)
 
+/**
+ * Create a new engine
+ *
+ * Note: for the engine new/delete operations, including this,
+ * wasm_engine_new_with_config, wasm_engine_new_with_args, and
+ * wasm_engine_delete, if the platform has mutex initializer,
+ * then they are thread-safe: we use a global lock to lock the
+ * operations of the engine. Otherwise they are not thread-safe:
+ * when there are engine new/delete operations happening
+ * simultaneously in multiple threads, developer must create
+ * the lock by himself, and add the lock when calling these
+ * functions.
+ */
 WASM_API_EXTERN own wasm_engine_t* wasm_engine_new(void);
 WASM_API_EXTERN own wasm_engine_t* wasm_engine_new_with_config(own wasm_config_t*);
 
@@ -341,6 +354,7 @@ WASM_API_EXTERN own wasm_importtype_t* wasm_importtype_new(
 WASM_API_EXTERN const wasm_name_t* wasm_importtype_module(const wasm_importtype_t*);
 WASM_API_EXTERN const wasm_name_t* wasm_importtype_name(const wasm_importtype_t*);
 WASM_API_EXTERN const wasm_externtype_t* wasm_importtype_type(const wasm_importtype_t*);
+WASM_API_EXTERN bool wasm_importtype_is_linked(const wasm_importtype_t*);
 
 
 // Export Types
@@ -454,6 +468,7 @@ struct WASMModuleCommon;
 typedef struct WASMModuleCommon *wasm_module_t;
 #endif
 
+
 WASM_API_EXTERN own wasm_module_t* wasm_module_new(
   wasm_store_t*, const wasm_byte_vec_t* binary);
 
@@ -464,8 +479,13 @@ WASM_API_EXTERN bool wasm_module_validate(wasm_store_t*, const wasm_byte_vec_t* 
 WASM_API_EXTERN void wasm_module_imports(const wasm_module_t*, own wasm_importtype_vec_t* out);
 WASM_API_EXTERN void wasm_module_exports(const wasm_module_t*, own wasm_exporttype_vec_t* out);
 
-WASM_API_EXTERN void wasm_module_serialize(const wasm_module_t*, own wasm_byte_vec_t* out);
+WASM_API_EXTERN void wasm_module_serialize(wasm_module_t*, own wasm_byte_vec_t* out);
 WASM_API_EXTERN own wasm_module_t* wasm_module_deserialize(wasm_store_t*, const wasm_byte_vec_t*);
+
+typedef wasm_module_t wasm_shared_module_t;
+WASM_API_EXTERN own wasm_shared_module_t* wasm_module_share(wasm_module_t*);
+WASM_API_EXTERN own wasm_module_t* wasm_module_obtain(wasm_store_t*, wasm_shared_module_t*);
+WASM_API_EXTERN void wasm_shared_module_delete(own wasm_shared_module_t*);
 
 
 // Function Instances
@@ -777,6 +797,9 @@ static inline void* wasm_val_ptr(const wasm_val_t* val) {
 #define WASM_INIT_VAL {.kind = WASM_ANYREF, .of = {.ref = NULL}}
 
 #define KILOBYTE(n) ((n) * 1024)
+
+// Create placeholders filled in `wasm_externvec_t* imports` for `wasm_instance_new()`
+WASM_API_EXTERN wasm_extern_t *wasm_extern_new_empty(wasm_store_t *,  wasm_externkind_t);
 
 ///////////////////////////////////////////////////////////////////////////////
 

@@ -46,6 +46,8 @@ extern "C" {
 #define BH_PLATFORM_DARWIN
 #endif
 
+#define BH_HAS_DLFCN 1
+
 /* Stack size of applet threads's native part.  */
 #define BH_APPLET_PRESERVED_STACK_SIZE (32 * 1024)
 
@@ -57,6 +59,8 @@ typedef pthread_mutex_t korp_mutex;
 typedef pthread_cond_t korp_cond;
 typedef pthread_t korp_thread;
 typedef sem_t korp_sem;
+
+#define OS_THREAD_MUTEX_INITIALIZER PTHREAD_MUTEX_INITIALIZER
 
 #define os_thread_local_attribute __thread
 

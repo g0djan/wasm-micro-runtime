@@ -57,6 +57,10 @@ static const aot_intrinsic g_intrinsic_mapping[] = {
     { "i32_trunc_f32_s", "aot_intrinsic_f32_to_i32", AOT_INTRINSIC_FLAG_F32_TO_I32 },
     { "i32_trunc_f64_u", "aot_intrinsic_f64_to_u32", AOT_INTRINSIC_FLAG_F64_TO_U32 },
     { "i32_trunc_f64_s", "aot_intrinsic_f64_to_i32", AOT_INTRINSIC_FLAG_F64_TO_I32 },
+    { "i64_trunc_f64_u", "aot_intrinsic_f64_to_u64", AOT_INTRINSIC_FLAG_F64_TO_U64 },
+    { "i64_trunc_f32_s", "aot_intrinsic_f32_to_i64", AOT_INTRINSIC_FLAG_F32_TO_I64 },
+    { "i64_trunc_f32_u", "aot_intrinsic_f32_to_u64", AOT_INTRINSIC_FLAG_F32_TO_U64 },
+    { "i64_trunc_f64_s", "aot_intrinsic_f64_to_i64", AOT_INTRINSIC_FLAG_F64_TO_I64 },
     { "f32_demote_f64", "aot_intrinsic_f64_to_f32", AOT_INTRINSIC_FLAG_F64_TO_F32 },
     { "f64_promote_f32", "aot_intrinsic_f32_to_f64", AOT_INTRINSIC_FLAG_F32_TO_F64 },
     { "f32_cmp", "aot_intrinsic_f32_cmp", AOT_INTRINSIC_FLAG_F32_CMP },
@@ -66,9 +70,15 @@ static const aot_intrinsic g_intrinsic_mapping[] = {
     { "f32.const", NULL, AOT_INTRINSIC_FLAG_F32_CONST },
     { "f64.const", NULL, AOT_INTRINSIC_FLAG_F64_CONST },
     { "i64.div_s", "aot_intrinsic_i64_div_s", AOT_INTRINSIC_FLAG_I64_DIV_S},
+    { "i32.div_s", "aot_intrinsic_i32_div_s", AOT_INTRINSIC_FLAG_I32_DIV_S},
+    { "i32.div_u", "aot_intrinsic_i32_div_u", AOT_INTRINSIC_FLAG_I32_DIV_U},
+    { "i32.rem_s", "aot_intrinsic_i32_rem_s", AOT_INTRINSIC_FLAG_I32_REM_S},
+    { "i32.rem_u", "aot_intrinsic_i32_rem_u", AOT_INTRINSIC_FLAG_I32_REM_U},
     { "i64.div_u", "aot_intrinsic_i64_div_u", AOT_INTRINSIC_FLAG_I64_DIV_U},
     { "i64.rem_s", "aot_intrinsic_i64_rem_s", AOT_INTRINSIC_FLAG_I64_REM_S},
     { "i64.rem_u", "aot_intrinsic_i64_rem_u", AOT_INTRINSIC_FLAG_I64_REM_U},
+    { "i64.or", "aot_intrinsic_i64_bit_or", AOT_INTRINSIC_FLAG_I64_BIT_OR},
+    { "i64.and", "aot_intrinsic_i64_bit_and", AOT_INTRINSIC_FLAG_I64_BIT_AND},
 };
 /* clang-format on */
 
@@ -126,7 +136,7 @@ aot_intrinsic_fdiv_f64(float64 a, float64 b)
 float32
 aot_intrinsic_fabs_f32(float32 a)
 {
-    return (float32)fabs(a);
+    return fabsf(a);
 }
 
 float64
@@ -138,7 +148,7 @@ aot_intrinsic_fabs_f64(float64 a)
 float32
 aot_intrinsic_ceil_f32(float32 a)
 {
-    return (float32)ceilf(a);
+    return ceilf(a);
 }
 
 float64
@@ -150,7 +160,7 @@ aot_intrinsic_ceil_f64(float64 a)
 float32
 aot_intrinsic_floor_f32(float32 a)
 {
-    return (float32)floorf(a);
+    return floorf(a);
 }
 
 float64
@@ -162,7 +172,7 @@ aot_intrinsic_floor_f64(float64 a)
 float32
 aot_intrinsic_trunc_f32(float32 a)
 {
-    return (float32)trunc(a);
+    return truncf(a);
 }
 
 float64
@@ -174,7 +184,7 @@ aot_intrinsic_trunc_f64(float64 a)
 float32
 aot_intrinsic_rint_f32(float32 a)
 {
-    return (float32)rint(a);
+    return rintf(a);
 }
 
 float64
@@ -186,7 +196,7 @@ aot_intrinsic_rint_f64(float64 a)
 float32
 aot_intrinsic_sqrt_f32(float32 a)
 {
-    return (float32)sqrt(a);
+    return sqrtf(a);
 }
 
 float64
@@ -198,7 +208,7 @@ aot_intrinsic_sqrt_f64(float64 a)
 float32
 aot_intrinsic_copysign_f32(float32 a, float32 b)
 {
-    return signbit(b) ? (float32)-fabs(a) : (float32)fabs(a);
+    return signbit(b) ? -fabsf(a) : fabsf(a);
 }
 
 float64
@@ -210,41 +220,45 @@ aot_intrinsic_copysign_f64(float64 a, float64 b)
 float32
 aot_intrinsic_fmin_f32(float32 a, float32 b)
 {
-    if (isnan(a))
-        return a;
-    else if (isnan(b))
-        return b;
+    if (isnan(a) || isnan(b))
+        return NAN;
+    else if (a == 0 && a == b)
+        return signbit(a) ? a : b;
     else
-        return (float32)fmin(a, b);
+        return a > b ? b : a;
 }
 
 float64
 aot_intrinsic_fmin_f64(float64 a, float64 b)
 {
-    float64 c = fmin(a, b);
-    if (c == 0 && a == b)
+    if (isnan(a) || isnan(b))
+        return NAN;
+    else if (a == 0 && a == b)
         return signbit(a) ? a : b;
-    return c;
+    else
+        return a > b ? b : a;
 }
 
 float32
 aot_intrinsic_fmax_f32(float32 a, float32 b)
 {
-    if (isnan(a))
-        return a;
-    else if (isnan(b))
-        return b;
+    if (isnan(a) || isnan(b))
+        return NAN;
+    else if (a == 0 && a == b)
+        return signbit(a) ? b : a;
     else
-        return (float32)fmax(a, b);
+        return a > b ? a : b;
 }
 
 float64
 aot_intrinsic_fmax_f64(float64 a, float64 b)
 {
-    float64 c = fmax(a, b);
-    if (c == 0 && a == b)
+    if (isnan(a) || isnan(b))
+        return NAN;
+    else if (a == 0 && a == b)
         return signbit(a) ? b : a;
-    return c;
+    else
+        return a > b ? a : b;
 }
 
 uint32
@@ -434,7 +448,7 @@ aot_intrinsic_f32_cmp(AOTFloatCond cond, float32 lhs, float32 rhs)
 {
     switch (cond) {
         case FLOAT_EQ:
-            return (float32)fabs(lhs - rhs) <= WA_FLT_EPSILON ? 1 : 0;
+            return lhs == rhs ? 1 : 0;
 
         case FLOAT_LT:
             return lhs < rhs ? 1 : 0;
@@ -465,7 +479,7 @@ aot_intrinsic_f64_cmp(AOTFloatCond cond, float64 lhs, float64 rhs)
 {
     switch (cond) {
         case FLOAT_EQ:
-            return fabs(lhs - rhs) <= WA_DBL_EPSILON ? 1 : 0;
+            return lhs == rhs ? 1 : 0;
 
         case FLOAT_LT:
             return lhs < rhs ? 1 : 0;
@@ -497,6 +511,30 @@ aot_intrinsic_i64_div_s(int64 l, int64 r)
     return l / r;
 }
 
+int32
+aot_intrinsic_i32_div_s(int32 l, int32 r)
+{
+    return l / r;
+}
+
+uint32
+aot_intrinsic_i32_div_u(uint32 l, uint32 r)
+{
+    return l / r;
+}
+
+int32
+aot_intrinsic_i32_rem_s(int32 l, int32 r)
+{
+    return l % r;
+}
+
+uint32
+aot_intrinsic_i32_rem_u(uint32 l, uint32 r)
+{
+    return l % r;
+}
+
 uint64
 aot_intrinsic_i64_div_u(uint64 l, uint64 r)
 {
@@ -513,6 +551,18 @@ uint64
 aot_intrinsic_i64_rem_u(uint64 l, uint64 r)
 {
     return l % r;
+}
+
+uint64
+aot_intrinsic_i64_bit_or(uint64 l, uint64 r)
+{
+    return l | r;
+}
+
+uint64
+aot_intrinsic_i64_bit_and(uint64 l, uint64 r)
+{
+    return l & r;
 }
 
 const char *
@@ -549,6 +599,17 @@ add_i64_common_intrinsics(AOTCompContext *comp_ctx)
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I64_DIV_U);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I64_REM_S);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I64_REM_U);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I64_BIT_OR);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I64_BIT_AND);
+}
+
+static void
+add_i32_common_intrinsics(AOTCompContext *comp_ctx)
+{
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I32_DIV_S);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I32_DIV_U);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I32_REM_S);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I32_REM_U);
 }
 
 static void
@@ -561,6 +622,12 @@ add_f32_common_intrinsics(AOTCompContext *comp_ctx)
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_FDIV);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_SQRT);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_CMP);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_MIN);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_MAX);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_CEIL);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_FLOOR);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_TRUNC);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_RINT);
 }
 
 static void
@@ -570,6 +637,12 @@ add_f64_common_intrinsics(AOTCompContext *comp_ctx)
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_FADD);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_FSUB);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_FMUL);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_MIN);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_MAX);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_CEIL);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_FLOOR);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_TRUNC);
+    add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_RINT);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_FDIV);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_SQRT);
     add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_CMP);
@@ -638,6 +711,8 @@ aot_intrinsic_fill_capability_flags(AOTCompContext *comp_ctx)
         return;
 
     if (!strncmp(comp_ctx->target_arch, "thumb", 5)) {
+        add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I32_CONST);
+        add_i32_common_intrinsics(comp_ctx);
         if (!strcmp(comp_ctx->target_cpu, "cortex-m7")) {
         }
         else if (!strcmp(comp_ctx->target_cpu, "cortex-m4")) {
@@ -646,10 +721,12 @@ aot_intrinsic_fill_capability_flags(AOTCompContext *comp_ctx)
         else {
             add_f32_common_intrinsics(comp_ctx);
             add_f64_common_intrinsics(comp_ctx);
+            add_i64_common_intrinsics(comp_ctx);
             add_common_float_integer_convertion(comp_ctx);
         }
     }
     else if (!strncmp(comp_ctx->target_arch, "riscv", 5)) {
+        add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_I32_CONST);
         /*
          * Note: Use builtin intrinsics since hardware float operation
          * will cause rodata relocation
@@ -657,9 +734,9 @@ aot_intrinsic_fill_capability_flags(AOTCompContext *comp_ctx)
         add_f32_common_intrinsics(comp_ctx);
         add_f64_common_intrinsics(comp_ctx);
         add_common_float_integer_convertion(comp_ctx);
-    }
-    else if (!strncmp(comp_ctx->target_arch, "riscv32", 7)) {
-        add_i64_common_intrinsics(comp_ctx);
+        if (!strncmp(comp_ctx->target_arch, "riscv32", 7)) {
+            add_i64_common_intrinsics(comp_ctx);
+        }
     }
     else if (!strncmp(comp_ctx->target_arch, "xtensa", 6)) {
         /*
@@ -667,7 +744,9 @@ aot_intrinsic_fill_capability_flags(AOTCompContext *comp_ctx)
          * will cause rodata relocation
          */
         add_f32_common_intrinsics(comp_ctx);
+        add_i32_common_intrinsics(comp_ctx);
         add_f64_common_intrinsics(comp_ctx);
+        add_i64_common_intrinsics(comp_ctx);
         add_common_float_integer_convertion(comp_ctx);
         add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F32_CONST);
         add_intrinsic_capability(comp_ctx, AOT_INTRINSIC_FLAG_F64_CONST);

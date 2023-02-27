@@ -26,8 +26,8 @@
 #include <malloc.h>
 #include <process.h>
 #include <winsock2.h>
-#include <Windows.h>
-#include <BaseTsd.h>
+#include <windows.h>
+#include <basetsd.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -56,11 +56,23 @@ typedef void *korp_tid;
 typedef void *korp_mutex;
 typedef void *korp_sem;
 
+/**
+ * Create the mutex when os_mutex_lock is called, and no need to
+ * CloseHandle() for the static lock's lifetime, since
+ * "The system closes the handle automatically when the process
+ *  terminates. The mutex object is destroyed when its last
+ *  handle has been closed."
+ * Refer to:
+ *   https://learn.microsoft.com/en-us/windows/win32/api/synchapi/nf-synchapi-createmutexa
+ */
+#define OS_THREAD_MUTEX_INITIALIZER NULL
+
 struct os_thread_wait_node;
 typedef struct os_thread_wait_node *os_thread_wait_list;
 typedef struct korp_cond {
     korp_mutex wait_list_lock;
     os_thread_wait_list thread_wait_list;
+    struct os_thread_wait_node *thread_wait_list_end;
 } korp_cond;
 
 #define bh_socket_t SOCKET

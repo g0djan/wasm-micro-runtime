@@ -16,7 +16,7 @@ function help()
     echo "-c clean previous test results, not start test"
     echo "-s {suite_name} test only one suite (spec)"
     echo "-m set compile target of iwasm(x86_64\x86_32\armv7_vfp\thumbv7_vfp\riscv64_lp64d\riscv64_lp64)"
-    echo "-t set compile type of iwasm(classic-interp\fast-interp\jit\aot\fast-jit)"
+    echo "-t set compile type of iwasm(classic-interp\fast-interp\jit\aot\fast-jit\multi-tier-jit)"
     echo "-M enable multi module feature"
     echo "-p enable multi thread feature"
     echo "-S enable SIMD feature"
@@ -24,14 +24,18 @@ function help()
     echo "-x test SGX"
     echo "-b use the wabt binary release package instead of compiling from the source code"
     echo "-P run the spec test parallelly"
+    echo "-Q enable qemu"
+    echo "-F set the firmware path used by qemu"
+    echo "-w enable WASI threads"
 }
 
 OPT_PARSED=""
 WABT_BINARY_RELEASE="NO"
 #default type
-TYPE=("classic-interp" "fast-interp" "jit" "aot" "fast-jit")
+TYPE=("classic-interp" "fast-interp" "jit" "aot" "fast-jit" "multi-tier-jit")
 #default target
 TARGET="X86_64"
+ENABLE_WASI_THREADS=0
 ENABLE_MULTI_MODULE=0
 ENABLE_MULTI_THREAD=0
 COLLECT_CODE_COVERAGE=0
@@ -42,8 +46,11 @@ TEST_CASE_ARR=()
 SGX_OPT=""
 PLATFORM=$(uname -s | tr A-Z a-z)
 PARALLELISM=0
+ENABLE_QEMU=0
+QEMU_FIRMWARE=""
+WASI_TESTSUITE_COMMIT="b18247e2161bea263fe924b8189c67b1d2d10a10"
 
-while getopts ":s:cabt:m:MCpSXxP" opt
+while getopts ":s:cabt:m:wMCpSXxPQF:" opt
 do
     OPT_PARSED="TRUE"
     case $opt in
@@ -80,7 +87,8 @@ do
         t)
         echo "set compile type of wamr " ${OPTARG}
         if [[ ${OPTARG} != "classic-interp" && ${OPTARG} != "fast-interp" \
-            && ${OPTARG} != "jit" && ${OPTARG} != "aot" && ${OPTARG} != "fast-jit" ]]; then
+            && ${OPTARG} != "jit" && ${OPTARG} != "aot"
+            && ${OPTARG} != "fast-jit" && ${OPTARG} != "multi-tier-jit" ]]; then
             echo "*----- please varify a type of compile when using -t! -----*"
             help
             exit 1
@@ -91,6 +99,10 @@ do
         m)
         echo "set compile target of wamr" ${OPTARG}
         TARGET=${OPTARG^^} # set target to uppercase if input x86_32 or x86_64 --> X86_32 and X86_64
+        ;;
+        w)
+        echo "enable WASI threads"
+        ENABLE_WASI_THREADS=1
         ;;
         M)
         echo "enable multi module feature"
@@ -118,6 +130,14 @@ do
         ;;
         P)
         PARALLELISM=1
+        ;;
+        Q)
+        echo "enable QEMU"
+        ENABLE_QEMU=1
+        ;;
+        F)
+        echo "QEMU firmware" ${OPTARG}
+        QEMU_FIRMWARE=${OPTARG}
         ;;
         ?)
         help
@@ -173,10 +193,18 @@ readonly FAST_INTERP_COMPILE_FLAGS="\
 
 # jit: report linking error if set COLLECT_CODE_COVERAGE,
 #      now we don't collect code coverage of jit type
-readonly JIT_COMPILE_FLAGS="\
+readonly ORC_EAGER_JIT_COMPILE_FLAGS="\
     -DWAMR_BUILD_TARGET=${TARGET} \
     -DWAMR_BUILD_INTERP=0 -DWAMR_BUILD_FAST_INTERP=0 \
     -DWAMR_BUILD_JIT=1 -DWAMR_BUILD_AOT=1 \
+    -DWAMR_BUILD_LAZY_JIT=0 \
+    -DWAMR_BUILD_SPEC_TEST=1"
+
+readonly ORC_LAZY_JIT_COMPILE_FLAGS="\
+    -DWAMR_BUILD_TARGET=${TARGET} \
+    -DWAMR_BUILD_INTERP=0 -DWAMR_BUILD_FAST_INTERP=0 \
+    -DWAMR_BUILD_JIT=1 -DWAMR_BUILD_AOT=1 \
+    -DWAMR_BUILD_LAZY_JIT=1 \
     -DWAMR_BUILD_SPEC_TEST=1"
 
 readonly AOT_COMPILE_FLAGS="\
@@ -193,12 +221,20 @@ readonly FAST_JIT_COMPILE_FLAGS="\
     -DWAMR_BUILD_FAST_JIT=1 \
     -DWAMR_BUILD_SPEC_TEST=1"
 
+readonly MULTI_TIER_JIT_COMPILE_FLAGS="\
+    -DWAMR_BUILD_TARGET=${TARGET} \
+    -DWAMR_BUILD_INTERP=1 -DWAMR_BUILD_FAST_INTERP=0 \
+    -DWAMR_BUILD_FAST_JIT=1 -DWAMR_BUILD_JIT=1 \
+    -DWAMR_BUILD_SPEC_TEST=1"
+
 readonly COMPILE_FLAGS=(
         "${CLASSIC_INTERP_COMPILE_FLAGS}"
         "${FAST_INTERP_COMPILE_FLAGS}"
-        "${JIT_COMPILE_FLAGS}"
+        "${ORC_EAGER_JIT_COMPILE_FLAGS}"
+        "${ORC_LAZY_JIT_COMPILE_FLAGS}"
         "${AOT_COMPILE_FLAGS}"
         "${FAST_JIT_COMPILE_FLAGS}"
+        "${MULTI_TIER_JIT_COMPILE_FLAGS}"
     )
 
 # TODO: with libiwasm.so only
@@ -308,6 +344,7 @@ function spec_test()
         git checkout threads/main
 
         git apply ../../spec-test-script/thread_proposal_ignore_cases.patch
+        git apply ../../spec-test-script/thread_proposal_fix_atomic_case.patch
     fi
 
     popd
@@ -329,16 +366,16 @@ function spec_test()
                     exit 1
                     ;;
             esac
-            if [ ! -f /tmp/wabt-1.0.29-${WABT_PLATFORM}.tar.gz ]; then
+            if [ ! -f /tmp/wabt-1.0.31-${WABT_PLATFORM}.tar.gz ]; then
                 wget \
-                    https://github.com/WebAssembly/wabt/releases/download/1.0.29/wabt-1.0.29-${WABT_PLATFORM}.tar.gz \
+                    https://github.com/WebAssembly/wabt/releases/download/1.0.31/wabt-1.0.31-${WABT_PLATFORM}.tar.gz \
                     -P /tmp
             fi
 
             cd /tmp \
-            && tar zxf wabt-1.0.29-${WABT_PLATFORM}.tar.gz \
+            && tar zxf wabt-1.0.31-${WABT_PLATFORM}.tar.gz \
             && mkdir -p ${WORK_DIR}/wabt/out/gcc/Release/ \
-            && install wabt-1.0.29/bin/wa* ${WORK_DIR}/wabt/out/gcc/Release/ \
+            && install wabt-1.0.31/bin/wa* ${WORK_DIR}/wabt/out/gcc/Release/ \
             && cd -
         fi
     else
@@ -383,24 +420,47 @@ function spec_test()
 
     if [[ ${ENABLE_MULTI_THREAD} == 1 ]]; then
         ARGS_FOR_SPEC_TEST+="-p "
+        if [[ $1 == 'fast-jit' ]]; then
+          echo "fast-jit doesn't support multi-thread feature yet, skip it"
+          return
+        fi
+        if [[ $1 == 'multi-tier-jit' ]]; then
+          echo "multi-tier-jit doesn't support multi-thread feature yet, skip it"
+          return
+        fi
     fi
 
     if [[ ${ENABLE_XIP} == 1 ]]; then
         ARGS_FOR_SPEC_TEST+="-X "
     fi
 
+    # set the current running target
+    ARGS_FOR_SPEC_TEST+="-m ${TARGET} "
+
     # require warmc only in aot mode
     if [[ $1 == 'aot' ]]; then
-        ARGS_FOR_SPEC_TEST+="-t -m ${TARGET} "
+        ARGS_FOR_SPEC_TEST+="-t "
     fi
 
     if [[ ${PARALLELISM} == 1 ]]; then
         ARGS_FOR_SPEC_TEST+="--parl "
     fi
 
+    if [[ ${ENABLE_QEMU} == 1 ]]; then
+        ARGS_FOR_SPEC_TEST+="--qemu "
+        ARGS_FOR_SPEC_TEST+="--qemu-firmware ${QEMU_FIRMWARE} "
+    fi
+
+    # set log directory
+    ARGS_FOR_SPEC_TEST+="--log ${REPORT_DIR}"
+
     cd ${WORK_DIR}
+    echo "python3 ./all.py ${ARGS_FOR_SPEC_TEST} | tee -a ${REPORT_DIR}/spec_test_report.txt"
     python3 ./all.py ${ARGS_FOR_SPEC_TEST} | tee -a ${REPORT_DIR}/spec_test_report.txt
-    [[ ${PIPESTATUS[0]} -ne 0 ]] && exit 1
+    if [[ ${PIPESTATUS[0]} -ne 0 ]];then
+        echo -e "\nspec tests FAILED" | tee -a ${REPORT_DIR}/spec_test_report.txt
+        exit 1
+    fi
     cd -
 
     echo -e "\nFinish spec tests" | tee -a ${REPORT_DIR}/spec_test_report.txt
@@ -420,6 +480,30 @@ function wasi_test()
                             --interpreter ${IWASM_CMD} \
                             | tee ${REPORT_DIR}/wasi_test_report.txt
     echo "Finish wasi tests"
+}
+
+function wasi_certification_test()
+{
+    echo  "Now start wasi tests"
+
+    cd ${WORK_DIR}
+    if [ ! -d "wasi-testsuite" ]; then
+        echo "wasi not exist, clone it from github"
+        git clone -b prod/testsuite-all \
+            --single-branch https://github.com/WebAssembly/wasi-testsuite.git
+    fi
+    cd wasi-testsuite
+    git reset --hard ${WASI_TESTSUITE_COMMIT}
+
+    bash ../../wasi-test-script/run_wasi_tests.sh $1 $TARGET \
+        | tee -a ${REPORT_DIR}/wasi_test_report.txt
+    ret=${PIPESTATUS[0]}
+
+    if [[ ${ret} -ne 0 ]];then
+        echo -e "\nwasi tests FAILED" | tee -a ${REPORT_DIR}/wasi_test_report.txt
+        exit 1
+    fi
+    echo -e "\nFinish wasi tests" | tee -a ${REPORT_DIR}/wasi_test_report.txt
 }
 
 function polybench_test()
@@ -494,8 +578,8 @@ function build_iwasm_with_cfg()
 function build_wamrc()
 {
     if [[ $TARGET == "ARMV7_VFP" || $TARGET == "THUMBV7_VFP"
-          || $TARGET == "RISCV64" || $TARGET == "RISCV64_LP64D"
-          || $TARGET == "RISCV64_LP64" ]];then
+          || $TARGET == "RISCV32" || $TARGET == "RISCV32_ILP32" || $TARGET == "RISCV32_ILP32D"
+          || $TARGET == "RISCV64" || $TARGET == "RISCV64_LP64D" || $TARGET == "RISCV64_LP64" ]];then
         echo "suppose wamrc is already built"
         return
     fi
@@ -555,6 +639,12 @@ function trigger()
         EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_SIMD=0"
     fi
 
+    if [[ ${ENABLE_WASI_THREADS} == 1 ]]; then
+        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_LIB_WASI_THREADS=1"
+    else
+        EXTRA_COMPILE_FLAGS+=" -DWAMR_BUILD_LIB_WASI_THREADS=0"
+    fi
+
     for t in "${TYPE[@]}"; do
         case $t in
             "classic-interp")
@@ -566,7 +656,9 @@ function trigger()
                 echo "work in classic-interp mode"
                 # classic-interp
                 BUILD_FLAGS="$CLASSIC_INTERP_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
-                build_iwasm_with_cfg $BUILD_FLAGS
+                if [[ ${ENABLE_QEMU} == 0 ]]; then
+                    build_iwasm_with_cfg $BUILD_FLAGS
+                fi
                 for suite in "${TEST_CASE_ARR[@]}"; do
                     $suite"_test" classic-interp
                 done
@@ -582,7 +674,9 @@ function trigger()
                 echo "work in fast-interp mode"
                 # fast-interp
                 BUILD_FLAGS="$FAST_INTERP_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
-                build_iwasm_with_cfg $BUILD_FLAGS
+                if [[ ${ENABLE_QEMU} == 0 ]]; then
+                    build_iwasm_with_cfg $BUILD_FLAGS
+                fi
                 for suite in "${TEST_CASE_ARR[@]}"; do
                     $suite"_test" fast-interp
                 done
@@ -595,9 +689,16 @@ function trigger()
                     continue
                 fi
 
-                echo "work in jit mode"
-                # jit
-                BUILD_FLAGS="$JIT_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
+                echo "work in orc jit eager compilation mode"
+                BUILD_FLAGS="$ORC_EAGER_JIT_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
+                build_iwasm_with_cfg $BUILD_FLAGS
+                build_wamrc
+                for suite in "${TEST_CASE_ARR[@]}"; do
+                    $suite"_test" jit
+                done
+
+                echo "work in orc jit lazy compilation mode"
+                BUILD_FLAGS="$ORC_EAGER_JIT_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
                 build_iwasm_with_cfg $BUILD_FLAGS
                 build_wamrc
                 for suite in "${TEST_CASE_ARR[@]}"; do
@@ -609,7 +710,9 @@ function trigger()
                 echo "work in aot mode"
                 # aot
                 BUILD_FLAGS="$AOT_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
-                build_iwasm_with_cfg $BUILD_FLAGS
+                if [[ ${ENABLE_QEMU} == 0 ]]; then
+                    build_iwasm_with_cfg $BUILD_FLAGS
+                fi
                 build_wamrc
                 for suite in "${TEST_CASE_ARR[@]}"; do
                     $suite"_test" aot
@@ -619,11 +722,21 @@ function trigger()
 
             "fast-jit")
                 echo "work in fast-jit mode"
-                # jit
+                # fast-jit
                 BUILD_FLAGS="$FAST_JIT_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
                 build_iwasm_with_cfg $BUILD_FLAGS
                 for suite in "${TEST_CASE_ARR[@]}"; do
                     $suite"_test" fast-jit
+                done
+            ;;
+
+            "multi-tier-jit")
+                echo "work in multi-tier-jit mode"
+                # multi-tier-jit
+                BUILD_FLAGS="$MULTI_TIER_JIT_COMPILE_FLAGS $EXTRA_COMPILE_FLAGS"
+                build_iwasm_with_cfg $BUILD_FLAGS
+                for suite in "${TEST_CASE_ARR[@]}"; do
+                    $suite"_test" multi-tier-jit
                 done
             ;;
 

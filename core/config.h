@@ -70,6 +70,10 @@
 #define WASM_ENABLE_AOT 0
 #endif
 
+#ifndef WASM_ENABLE_WORD_ALIGN_READ
+#define WASM_ENABLE_WORD_ALIGN_READ 0
+#endif
+
 #define AOT_MAGIC_NUMBER 0x746f6100
 #define AOT_CURRENT_VERSION 3
 
@@ -81,12 +85,26 @@
 #define WASM_ENABLE_LAZY_JIT 0
 #endif
 
-#ifndef WASM_LAZY_JIT_COMPILE_THREAD_NUM
-#define WASM_LAZY_JIT_COMPILE_THREAD_NUM 4
+#ifndef WASM_ORC_JIT_BACKEND_THREAD_NUM
+/* The number of backend threads created by runtime */
+#define WASM_ORC_JIT_BACKEND_THREAD_NUM 4
+#endif
+
+#if WASM_ORC_JIT_BACKEND_THREAD_NUM < 1
+#error "WASM_ORC_JIT_BACKEND_THREAD_NUM must be greater than 0"
+#endif
+
+#ifndef WASM_ORC_JIT_COMPILE_THREAD_NUM
+/* The number of compilation threads created by LLVM JIT */
+#define WASM_ORC_JIT_COMPILE_THREAD_NUM 4
+#endif
+
+#if WASM_ORC_JIT_COMPILE_THREAD_NUM < 1
+#error "WASM_ORC_JIT_COMPILE_THREAD_NUM must be greater than 0"
 #endif
 
 #if (WASM_ENABLE_AOT == 0) && (WASM_ENABLE_JIT != 0)
-/* LazyJIT or MCJIT can only be enabled when AOT is enabled */
+/* LLVM JIT can only be enabled when AOT is enabled */
 #undef WASM_ENABLE_JIT
 #define WASM_ENABLE_JIT 0
 
@@ -110,14 +128,6 @@
 #define WASM_ENABLE_WAMR_COMPILER 0
 #endif
 
-#if WASM_ENABLE_WAMR_COMPILER != 0
-#ifndef WASM_ENABLE_LLVM_LEGACY_PM
-/* Whether to use LLVM legacy pass manager when building wamrc,
-   by default it is disabled and LLVM new pass manager is used */
-#define WASM_ENABLE_LLVM_LEGACY_PM 0
-#endif
-#endif
-
 #ifndef WASM_ENABLE_LIBC_BUILTIN
 #define WASM_ENABLE_LIBC_BUILTIN 0
 #endif
@@ -128,6 +138,10 @@
 
 #ifndef WASM_ENABLE_UVWASI
 #define WASM_ENABLE_UVWASI 0
+#endif
+
+#ifndef WASM_ENABLE_WASI_NN
+#define WASM_ENABLE_WASI_NN 0
 #endif
 
 /* Default disable libc emcc */
@@ -145,6 +159,17 @@
 
 #ifndef WASM_ENABLE_LIB_PTHREAD_SEMAPHORE
 #define WASM_ENABLE_LIB_PTHREAD_SEMAPHORE 0
+#endif
+
+#ifndef WASM_ENABLE_LIB_WASI_THREADS
+#define WASM_ENABLE_LIB_WASI_THREADS 0
+#endif
+
+#ifndef WASM_ENABLE_HEAP_AUX_STACK_ALLOCATION
+#define WASM_ENABLE_HEAP_AUX_STACK_ALLOCATION WASM_ENABLE_LIB_WASI_THREADS
+#elif WASM_ENABLE_HEAP_AUX_STACK_ALLOCATION == 0 \
+    && WASM_ENABLE_LIB_WASI_THREADS == 1
+#error "Heap aux stack allocation must be enabled for WASI threads"
 #endif
 
 #ifndef WASM_ENABLE_BASE_LIB
@@ -246,6 +271,12 @@
 #define WASM_DISABLE_HW_BOUND_CHECK 0
 #endif
 
+/* Disable native stack access boundary check with hardware
+ * trap or not, enable it by default if it is supported */
+#ifndef WASM_DISABLE_STACK_HW_BOUND_CHECK
+#define WASM_DISABLE_STACK_HW_BOUND_CHECK 0
+#endif
+
 /* Disable SIMD unless it is manualy enabled somewhere */
 #ifndef WASM_ENABLE_SIMD
 #define WASM_ENABLE_SIMD 0
@@ -292,12 +323,7 @@
 
 /* Global heap pool size in bytes */
 #ifndef WASM_GLOBAL_HEAP_SIZE
-#if WASM_ENABLE_SPEC_TEST != 0
-/* Spec test requires more heap pool size */
-#define WASM_GLOBAL_HEAP_SIZE (300 * 1024 * 1024)
-#else
 #define WASM_GLOBAL_HEAP_SIZE (10 * 1024 * 1024)
-#endif
 #endif
 
 /* Max app number of all modules */
@@ -413,6 +439,10 @@
 
 #ifndef WASM_MEM_ALLOC_WITH_USER_DATA
 #define WASM_MEM_ALLOC_WITH_USER_DATA 0
+#endif
+
+#ifndef WASM_ENABLE_WASM_CACHE
+#define WASM_ENABLE_WASM_CACHE 0
 #endif
 
 #endif /* end of _CONFIG_H_ */

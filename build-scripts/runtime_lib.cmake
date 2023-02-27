@@ -1,7 +1,6 @@
 # Copyright (C) 2019 Intel Corporation. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-
 if (NOT DEFINED WAMR_ROOT_DIR)
     set (WAMR_ROOT_DIR ${CMAKE_CURRENT_LIST_DIR}/../)
 endif ()
@@ -19,6 +18,11 @@ if (NOT DEFINED APP_FRAMEWORK_DIR)
 endif ()
 if (NOT DEFINED DEPS_DIR)
     set (DEPS_DIR ${WAMR_ROOT_DIR}/core/deps)
+endif ()
+if (NOT DEFINED SHARED_PLATFORM_CONFIG)
+    # CMake file for platform configuration. The PLATFORM_SHARED_SOURCE varable
+    # should point to a list of platform-specfic source files to compile.
+    set (SHARED_PLATFORM_CONFIG ${SHARED_DIR}/platform/${WAMR_BUILD_PLATFORM}/shared_platform.cmake)
 endif ()
 
 if (DEFINED EXTRA_SDK_INCLUDE_PATH)
@@ -50,23 +54,28 @@ if (NOT DEFINED WAMR_BUILD_TARGET)
 endif ()
 
 ################ optional according to settings ################
-if (WAMR_BUILD_INTERP EQUAL 1 OR WAMR_BUILD_JIT EQUAL 1
-    OR WAMR_BUILD_FAST_JIT EQUAL 1)
-    if (WAMR_BUILD_FAST_JIT EQUAL 1 OR WAMR_BUILD_JIT EQUAL 1)
-        set (WAMR_BUILD_FAST_INTERP 0)
-    endif ()
+if (WAMR_BUILD_FAST_JIT EQUAL 1 OR WAMR_BUILD_JIT EQUAL 1)
+    # Enable classic interpreter if Fast JIT or LLVM JIT is enabled
+    set (WAMR_BUILD_INTERP 1)
+    set (WAMR_BUILD_FAST_INTERP 0)
+endif ()
+
+if (WAMR_BUILD_INTERP EQUAL 1)
     include (${IWASM_DIR}/interpreter/iwasm_interp.cmake)
+endif ()
+
+if (WAMR_BUILD_FAST_JIT EQUAL 1)
+    include (${IWASM_DIR}/fast-jit/iwasm_fast_jit.cmake)
+endif ()
+
+if (WAMR_BUILD_JIT EQUAL 1)
+    # Enable AOT if LLVM JIT is enabled
+    set (WAMR_BUILD_AOT 1)
+    include (${IWASM_DIR}/compilation/iwasm_compl.cmake)
 endif ()
 
 if (WAMR_BUILD_AOT EQUAL 1)
     include (${IWASM_DIR}/aot/iwasm_aot.cmake)
-    if (WAMR_BUILD_JIT EQUAL 1)
-        include (${IWASM_DIR}/compilation/iwasm_compl.cmake)
-    endif ()
-endif ()
-
-if (NOT WAMR_BUILD_JIT EQUAL 1 AND WAMR_BUILD_FAST_JIT EQUAL 1)
-    include (${IWASM_DIR}/fast-jit/iwasm_fast_jit.cmake)
 endif ()
 
 if (WAMR_BUILD_APP_FRAMEWORK EQUAL 1)
@@ -91,9 +100,34 @@ if (WAMR_BUILD_LIB_PTHREAD_SEMAPHORE EQUAL 1)
     set (WAMR_BUILD_LIB_PTHREAD 1)
 endif ()
 
+if (WAMR_BUILD_WASI_NN EQUAL 1)
+    if (NOT EXISTS "${WAMR_ROOT_DIR}/core/deps/tensorflow-src")
+        execute_process(COMMAND ${WAMR_ROOT_DIR}/core/deps/install_tensorflow.sh
+                        RESULT_VARIABLE TENSORFLOW_RESULT
+        )
+    else ()
+        message("Tensorflow is already downloaded.")
+    endif()
+    set(TENSORFLOW_SOURCE_DIR "${WAMR_ROOT_DIR}/core/deps/tensorflow-src")
+    include_directories (${CMAKE_CURRENT_BINARY_DIR}/flatbuffers/include)
+    include_directories (${TENSORFLOW_SOURCE_DIR})
+    add_subdirectory(
+        "${TENSORFLOW_SOURCE_DIR}/tensorflow/lite"
+        "${CMAKE_CURRENT_BINARY_DIR}/tensorflow-lite" EXCLUDE_FROM_ALL)
+    include (${IWASM_DIR}/libraries/wasi-nn/wasi_nn.cmake)
+endif ()
+
 if (WAMR_BUILD_LIB_PTHREAD EQUAL 1)
     include (${IWASM_DIR}/libraries/lib-pthread/lib_pthread.cmake)
     # Enable the dependent feature if lib pthread is enabled
+    set (WAMR_BUILD_THREAD_MGR 1)
+    set (WAMR_BUILD_BULK_MEMORY 1)
+    set (WAMR_BUILD_SHARED_MEMORY 1)
+endif ()
+
+if (WAMR_BUILD_LIB_WASI_THREADS EQUAL 1)
+    include (${IWASM_DIR}/libraries/lib-wasi-threads/lib_wasi_threads.cmake)
+    # Enable the dependent feature if lib wasi threads is enabled
     set (WAMR_BUILD_THREAD_MGR 1)
     set (WAMR_BUILD_BULK_MEMORY 1)
     set (WAMR_BUILD_SHARED_MEMORY 1)
@@ -122,6 +156,10 @@ if (WAMR_BUILD_LIB_RATS EQUAL 1)
     include (${IWASM_DIR}/libraries/lib-rats/lib_rats.cmake)
 endif ()
 
+if (WAMR_BUILD_WASM_CACHE EQUAL 1)
+    include (${WAMR_ROOT_DIR}/build-scripts/involve_boringssl.cmake)
+endif ()
+
 ####################### Common sources #######################
 if (NOT MSVC)
     set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu99 -Wall -Wno-unused-parameter -Wno-pedantic")
@@ -142,7 +180,7 @@ LIST (APPEND RUNTIME_LIB_HEADER_LIST ${header})
 
 enable_language (ASM)
 
-include (${SHARED_DIR}/platform/${WAMR_BUILD_PLATFORM}/shared_platform.cmake)
+include (${SHARED_PLATFORM_CONFIG})
 include (${SHARED_DIR}/mem-alloc/mem_alloc.cmake)
 include (${IWASM_DIR}/common/iwasm_common.cmake)
 include (${SHARED_DIR}/utils/shared_utils.cmake)
@@ -154,6 +192,7 @@ set (source_all
     ${UTILS_SHARED_SOURCE}
     ${LIBC_BUILTIN_SOURCE}
     ${LIBC_WASI_SOURCE}
+    ${LIBC_WASI_NN_SOURCE}
     ${IWASM_COMMON_SOURCE}
     ${IWASM_INTERP_SOURCE}
     ${IWASM_AOT_SOURCE}
@@ -162,6 +201,7 @@ set (source_all
     ${WASM_APP_LIB_SOURCE_ALL}
     ${NATIVE_INTERFACE_SOURCE}
     ${APP_MGR_SOURCE}
+    ${LIB_WASI_THREADS_SOURCE}
     ${LIB_PTHREAD_SOURCE}
     ${THREAD_MGR_SOURCE}
     ${LIBC_EMCC_SOURCE}

@@ -1,9 +1,17 @@
 # Copyright (C) 2019 Intel Corporation. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-cmake_minimum_required (VERSION 2.9)
+cmake_minimum_required (VERSION 3.14)
 
-string (TOLOWER ${CMAKE_HOST_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
+include(CheckPIESupported)
+
+if (NOT DEFINED WAMR_BUILD_PLATFORM)
+  if (CMAKE_SYSTEM_NAME)
+    string(TOLOWER ${CMAKE_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
+  else()
+    string(TOLOWER ${CMAKE_HOST_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
+  endif()
+endif()
 
 if (NOT WAMR_BUILD_PLATFORM STREQUAL "windows")
   project (aot-compiler)
@@ -36,6 +44,7 @@ add_definitions(-DWASM_ENABLE_CUSTOM_NAME_SECTION=1)
 add_definitions(-DWASM_ENABLE_DUMP_CALL_STACK=1)
 add_definitions(-DWASM_ENABLE_PERF_PROFILING=1)
 add_definitions(-DWASM_ENABLE_LOAD_CUSTOM_SECTION=1)
+add_definitions(-DWASM_ENABLE_LIB_WASI_THREADS=1)
 
 if (WAMR_BUILD_LLVM_LEGACY_PM EQUAL 1)
   add_definitions(-DWASM_ENABLE_LLVM_LEGACY_PM=1)
@@ -101,7 +110,9 @@ if (CMAKE_SIZEOF_VOID_P EQUAL 8)
     if (NOT WAMR_BUILD_PLATFORM STREQUAL "windows")
       # Add -fPIC flag if build as 64-bit
       set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+      set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
       set (CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "${CMAKE_SHARED_LIBRARY_LINK_C_FLAGS} -fPIC")
+      set (CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS "${CMAKE_SHARED_LIBRARY_LINK_CXX_FLAGS} -fPIC")
     endif ()
   else ()
     add_definitions (-m32)
@@ -194,6 +205,7 @@ if (NOT MINGW)
   endif()
 endif()
 include (${IWASM_DIR}/libraries/lib-pthread/lib_pthread.cmake)
+include (${IWASM_DIR}/libraries/lib-wasi-threads/lib_wasi_threads.cmake)
 include (${IWASM_DIR}/common/iwasm_common.cmake)
 include (${IWASM_DIR}/interpreter/iwasm_interp.cmake)
 include (${IWASM_DIR}/aot/iwasm_aot.cmake)
@@ -224,24 +236,17 @@ endif ()
 if (NOT MSVC)
   set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fstack-protector-strong --param ssp-buffer-size=4")
 endif()
-if (NOT (MSVC OR CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
-  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wl,-z,noexecstack,-z,relro,-z,now")
-  set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wl,-z,noexecstack,-z,relro,-z,now")
-endif()
 
 # We disable these flags by default to stay the same with wasm runtime
 # set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mindirect-branch=thunk -mfunction-return=thunk")
 
 if (NOT MSVC)
-  if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -pie -fPIE -ftrapv -D_FORTIFY_SOURCE=2")
-  else()
-    set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIE -ftrapv -D_FORTIFY_SOURCE=2")
-  endif()
+  add_definitions(-D_FORTIFY_SOURCE=2)
+  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -ftrapv")
 endif()
 
-if (MSVC)
-  set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -D_WINSOCK_DEPRECATED_NO_WARNINGS")
+if (WIN32)
+  add_definitions(-D_WINSOCK_DEPRECATED_NO_WARNINGS)
 endif()
 
 # message ("-- CMAKE_C_FLAGS: ${CMAKE_C_FLAGS}")
@@ -255,6 +260,7 @@ add_library (vmlib
              ${LIBC_BUILTIN_SOURCE}
              ${LIBC_WASI_SOURCE}
              ${LIB_PTHREAD_SOURCE}
+             ${LIB_WASI_THREADS_SOURCE}
              ${IWASM_COMMON_SOURCE}
              ${IWASM_INTERP_SOURCE}
              ${IWASM_AOT_SOURCE})
@@ -262,16 +268,26 @@ add_library (vmlib
 add_library (aotclib ${IWASM_COMPL_SOURCE})
 
 add_executable (wamrc main.c)
+check_pie_supported()
+set_target_properties (wamrc PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
+if (LLVM_LINK_LLVM_DYLIB)
+  set(WAMRC_LINK_LLVM_LIBS LLVM)
+else()
+  set(WAMRC_LINK_LLVM_LIBS ${LLVM_AVAILABLE_LIBS})
+endif()
 
 if (NOT MSVC)
-  target_link_libraries (wamrc aotclib vmlib LLVMDemangle ${LLVM_AVAILABLE_LIBS} ${lib_ubsan}
+  target_link_libraries (wamrc aotclib vmlib ${WAMRC_LINK_LLVM_LIBS} ${lib_ubsan}
                          -lm -lpthread ${lib_lldb} ${UV_A_LIBS})
   if (MINGW)
-      target_link_libraries (wamrc -lssp -lWs2_32)
+      target_link_libraries (wamrc ssp.a ws2_32)
   else()
       target_link_libraries (wamrc -ldl)
   endif()
 else()
-  target_link_libraries (wamrc aotclib vmlib  ${lib_lldb} ${LLVM_AVAILABLE_LIBS} ${lib_ubsan}
+  target_link_libraries (wamrc aotclib vmlib  ${lib_lldb} ${WAMRC_LINK_LLVM_LIBS} ${lib_ubsan}
                          ${UV_A_LIBS})
 endif()
+
+install (TARGETS wamrc DESTINATION bin)

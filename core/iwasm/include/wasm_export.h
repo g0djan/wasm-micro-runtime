@@ -131,6 +131,14 @@ typedef struct mem_alloc_info_t {
     uint32_t highmark_size;
 } mem_alloc_info_t;
 
+/* Running mode of runtime and module instance*/
+typedef enum RunningMode {
+    Mode_Interp = 1,
+    Mode_Fast_JIT,
+    Mode_LLVM_JIT,
+    Mode_Multi_Tier_JIT,
+} RunningMode;
+
 /* WASM runtime initialize arguments */
 typedef struct RuntimeInitArgs {
     mem_alloc_type_t mem_alloc_type;
@@ -152,6 +160,13 @@ typedef struct RuntimeInitArgs {
 
     /* Fast JIT code cache size */
     uint32_t fast_jit_code_cache_size;
+
+    /* Default running mode of the runtime */
+    RunningMode running_mode;
+
+    /* LLVM JIT opt and size level */
+    uint32_t llvm_jit_opt_level;
+    uint32_t llvm_jit_size_level;
 } RuntimeInitArgs;
 
 #ifndef WASM_VALKIND_T_DEFINED
@@ -195,9 +210,9 @@ WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_init(void);
 
 /**
- * Initialize the WASM runtime environment, and also initialize
- * the memory allocator and register native symbols, which are specified
- * with init arguments
+ * Initialize the WASM runtime environment, WASM running mode,
+ * and also initialize the memory allocator and register native symbols,
+ * which are specified with init arguments
  *
  * @param init_args specifies the init arguments
  *
@@ -205,6 +220,28 @@ wasm_runtime_init(void);
  */
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_full_init(RuntimeInitArgs *init_args);
+
+/**
+ * Query whether a certain running mode is supported for the runtime
+ *
+ * @param running_mode the running mode to query
+ *
+ * @return true if this running mode is supported, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_running_mode_supported(RunningMode running_mode);
+
+/**
+ * Set the default running mode for the runtime. It is inherited
+ * to set the running mode of a module instance when it is instantiated,
+ * and can be changed by calling wasm_runtime_set_running_mode
+ *
+ * @param running_mode the running mode to set
+ *
+ * @return true if success, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_set_default_running_mode(RunningMode running_mode);
 
 /**
  * Destroy the WASM runtime environment.
@@ -360,6 +397,43 @@ wasm_runtime_load_from_sections(wasm_section_list_t section_list, bool is_aot,
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_unload(wasm_module_t module);
 
+/**
+ * Get the module hash of a WASM module, currently only available on
+ * linux-sgx platform when the remote attestation feature is enabled
+ *
+ * @param module the WASM module to retrieve
+ *
+ * @return the module hash of the WASM module
+ */
+char *
+wasm_runtime_get_module_hash(wasm_module_t module);
+
+/**
+ * Set WASI parameters.
+ *
+ * While this API operates on a module, these parameters will be used
+ * only when the module is instantiated. That is, you can consider these
+ * as extra parameters for wasm_runtime_instantiate().
+ *
+ * @param module        The module to set WASI parameters.
+ * @param dir_list      The list of directories to preopen. (real path)
+ * @param dir_count     The number of elements in dir_list.
+ * @param map_dir_list  The list of directories to preopen. (mapped path)
+ * @param map_dir_count The number of elements in map_dir_list.
+ *                      If map_dir_count is smaller than dir_count,
+ *                      mapped path is assumed to be same as the
+ *                      corresponding real path for the rest of entries.
+ * @param env           The list of environment variables.
+ * @param env_count     The number of elements in env.
+ * @param argv          The list of command line arguments.
+ * @param argc          The number of elements in argv.
+ * @param stdinfd       The host file descriptor to back WASI STDIN_FILENO.
+ *                      If -1 is specified, STDIN_FILENO is used.
+ * @param stdoutfd      The host file descriptor to back WASI STDOUT_FILENO.
+ *                      If -1 is specified, STDOUT_FILENO is used.
+ * @param stderrfd      The host file descriptor to back WASI STDERR_FILENO.
+ *                      If -1 is specified, STDERR_FILENO is used.
+ */
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_set_wasi_args_ex(wasm_module_t module,
                            const char *dir_list[], uint32_t dir_count,
@@ -368,6 +442,12 @@ wasm_runtime_set_wasi_args_ex(wasm_module_t module,
                            char *argv[], int argc,
                            int stdinfd, int stdoutfd, int stderrfd);
 
+/**
+ * Set WASI parameters.
+ *
+ * Same as wasm_runtime_set_wasi_args_ex with stdinfd = -1, stdoutfd = -1,
+ * stderrfd = -1.
+ */
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_set_wasi_args(wasm_module_t module,
                            const char *dir_list[], uint32_t dir_count,
@@ -408,6 +488,34 @@ wasm_runtime_instantiate(const wasm_module_t module,
                          char *error_buf, uint32_t error_buf_size);
 
 /**
+ * Set the running mode of a WASM module instance, override the
+ * default running mode of the runtime. Note that it only makes sense when
+ * the input is a wasm bytecode file: for the AOT file, runtime always runs
+ * it with AOT engine, and this function always returns true.
+ *
+ * @param module_inst the WASM module instance to set running mode
+ * @param running_mode the running mode to set
+ *
+ * @return true if success, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_set_running_mode(wasm_module_inst_t module_inst,
+                              RunningMode running_mode);
+
+/**
+ * Get the running mode of a WASM module instance, if no running mode
+ * is explicitly set the default running mode of runtime will
+ * be used and returned. Note that it only makes sense when the input is a
+ * wasm bytecode file: for the AOT file, this function always returns 0.
+ *
+ * @param module_inst the WASM module instance to query for running mode
+ *
+ * @return the running mode this module instance currently use
+ */
+WASM_RUNTIME_API_EXTERN RunningMode
+wasm_runtime_get_running_mode(wasm_module_inst_t module_inst);
+
+/**
  * Deinstantiate a WASM module instance, destroy the resources.
  *
  * @param module_inst the WASM module instance to destroy
@@ -415,11 +523,33 @@ wasm_runtime_instantiate(const wasm_module_t module,
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_deinstantiate(wasm_module_inst_t module_inst);
 
+/**
+ * Get WASM module from WASM module instance
+ *
+ * @param module_inst the WASM module instance to retrieve
+ *
+ * @return the WASM module
+ */
+WASM_RUNTIME_API_EXTERN wasm_module_t
+wasm_runtime_get_module(wasm_module_inst_t module_inst);
+
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_is_wasi_mode(wasm_module_inst_t module_inst);
 
 WASM_RUNTIME_API_EXTERN wasm_function_inst_t
 wasm_runtime_lookup_wasi_start_function(wasm_module_inst_t module_inst);
+
+/**
+ * Get WASI exit code.
+ *
+ * After a WASI command completed its execution, an embedder can
+ * call this function to get its exit code. (that is, the value given
+ * to proc_exit.)
+ *
+ * @param module_inst the module instance
+ */
+WASM_RUNTIME_API_EXTERN uint32_t
+wasm_runtime_get_wasi_exit_code(wasm_module_inst_t module_inst);
 
 /**
  * Lookup an exported function in the WASM module instance.
@@ -669,6 +799,31 @@ wasm_runtime_call_wasm_v(wasm_exec_env_t exec_env,
                          wasm_function_inst_t function,
                          uint32_t num_results, wasm_val_t results[],
                          uint32_t num_args, ...);
+
+/**
+ * Call a function reference of a given WASM runtime instance with
+ * arguments.
+ *
+ * Note: this can be used to call a function which is not exported
+ * by the module explicitly. You might consider it as an abstraction
+ * violation.
+ *
+ * @param exec_env the execution environment to call the function
+ *   which must be created from wasm_create_exec_env()
+ * @param element_index the function reference index, usually
+ *   prvovided by the caller of a registed native function
+ * @param argc the number of arguments
+ * @param argv the arguments.  If the function method has return value,
+ *   the first (or first two in case 64-bit return value) element of
+ *   argv stores the return value of the called WASM function after this
+ *   function returns.
+ *
+ * @return true if success, false otherwise and exception will be thrown,
+ *   the caller can call wasm_runtime_get_exception to get exception info.
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_call_indirect(wasm_exec_env_t exec_env, uint32_t element_index,
+                           uint32_t argc, uint32_t argv[]);
 
 /**
  * Find the unique main function from a WASM module instance
@@ -925,6 +1080,12 @@ wasm_runtime_get_native_addr_range(wasm_module_inst_t module_inst,
 /**
  * Register native functions with same module name
  *
+ * Note: The array `native_symbols` should not be read-only because the
+ * library can modify it in-place.
+ *
+ * Note: After successful call of this function, the array `native_symbols`
+ * is owned by the library.
+ *
  * @param module_name the module name of the native functions
  * @param native_symbols specifies an array of NativeSymbol structures which
  *        contain the names, function pointers and signatures
@@ -968,6 +1129,24 @@ WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_register_natives_raw(const char *module_name,
                                   NativeSymbol *native_symbols,
                                   uint32_t n_native_symbols);
+
+
+/**
+ * Undo wasm_runtime_register_natives or wasm_runtime_register_natives_raw
+ *
+ * @param module_name    Should be the same as the corresponding
+ *                       wasm_runtime_register_natives.
+ *                       (Same in term of strcmp.)
+ *
+ * @param native_symbols Should be the same as the corresponding
+ *                       wasm_runtime_register_natives.
+ *                       (Same in term of pointer comparison.)
+ *
+ * @return true if success, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_unregister_natives(const char *module_name,
+                                NativeSymbol *native_symbols);
 
 /**
  * Get attachment of native function from execution environment
@@ -1170,6 +1349,22 @@ wasm_runtime_get_custom_section(wasm_module_t const module_comm,
  */
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_get_version(uint32_t *major, uint32_t *minor, uint32_t *patch);
+
+/**
+ * Check whether an import func `(import <module_name> <func_name> (func ...))` is linked or not
+ * with runtime registered natvie functions
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_import_func_linked(const char *module_name,
+                                   const char *func_name);
+
+/**
+ * Check whether an import global `(import <module_name> <global_name> (global ...))` is linked or not
+ * with runtime registered natvie globals
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_import_global_linked(const char *module_name,
+                                     const char *global_name);
 /* clang-format on */
 
 #ifdef __cplusplus

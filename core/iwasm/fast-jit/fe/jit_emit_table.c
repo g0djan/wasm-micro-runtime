@@ -30,15 +30,15 @@ jit_compile_op_elem_drop(JitCompContext *cc, uint32 tbl_seg_idx)
 bool
 jit_compile_op_table_get(JitCompContext *cc, uint32 tbl_idx)
 {
-    JitReg elem_idx, tbl_sz, tbl_data, elem_idx_long, offset, res;
+    JitReg elem_idx, tbl_sz, tbl_elems, elem_idx_long, offset, res;
 
     POP_I32(elem_idx);
 
     /* if (elem_idx >= tbl_sz) goto exception; */
     tbl_sz = get_table_cur_size_reg(cc->jit_frame, tbl_idx);
     GEN_INSN(CMP, cc->cmp_reg, elem_idx, tbl_sz);
-    if (!jit_emit_exception(cc, JIT_EXCE_OUT_OF_BOUNDS_TABLE_ACCESS,
-                            JIT_OP_BGEU, cc->cmp_reg, NULL))
+    if (!jit_emit_exception(cc, EXCE_OUT_OF_BOUNDS_TABLE_ACCESS, JIT_OP_BGEU,
+                            cc->cmp_reg, NULL))
         goto fail;
 
     elem_idx_long = jit_cc_new_reg_I64(cc);
@@ -48,8 +48,8 @@ jit_compile_op_table_get(JitCompContext *cc, uint32 tbl_idx)
     GEN_INSN(MUL, offset, elem_idx_long, NEW_CONST(I64, sizeof(uint32)));
 
     res = jit_cc_new_reg_I32(cc);
-    tbl_data = get_table_data_reg(cc->jit_frame, tbl_idx);
-    GEN_INSN(LDI32, res, tbl_data, offset);
+    tbl_elems = get_table_elems_reg(cc->jit_frame, tbl_idx);
+    GEN_INSN(LDI32, res, tbl_elems, offset);
     PUSH_I32(res);
 
     return true;
@@ -60,7 +60,7 @@ fail:
 bool
 jit_compile_op_table_set(JitCompContext *cc, uint32 tbl_idx)
 {
-    JitReg elem_idx, elem_val, tbl_sz, tbl_data, elem_idx_long, offset;
+    JitReg elem_idx, elem_val, tbl_sz, tbl_elems, elem_idx_long, offset;
 
     POP_I32(elem_val);
     POP_I32(elem_idx);
@@ -68,8 +68,8 @@ jit_compile_op_table_set(JitCompContext *cc, uint32 tbl_idx)
     /* if (elem_idx >= tbl_sz) goto exception; */
     tbl_sz = get_table_cur_size_reg(cc->jit_frame, tbl_idx);
     GEN_INSN(CMP, cc->cmp_reg, elem_idx, tbl_sz);
-    if (!jit_emit_exception(cc, JIT_EXCE_OUT_OF_BOUNDS_TABLE_ACCESS,
-                            JIT_OP_BGEU, cc->cmp_reg, NULL))
+    if (!jit_emit_exception(cc, EXCE_OUT_OF_BOUNDS_TABLE_ACCESS, JIT_OP_BGEU,
+                            cc->cmp_reg, NULL))
         goto fail;
 
     elem_idx_long = jit_cc_new_reg_I64(cc);
@@ -78,8 +78,8 @@ jit_compile_op_table_set(JitCompContext *cc, uint32 tbl_idx)
     offset = jit_cc_new_reg_I64(cc);
     GEN_INSN(MUL, offset, elem_idx_long, NEW_CONST(I64, sizeof(uint32)));
 
-    tbl_data = get_table_data_reg(cc->jit_frame, tbl_idx);
-    GEN_INSN(STI32, elem_val, tbl_data, offset);
+    tbl_elems = get_table_elems_reg(cc->jit_frame, tbl_idx);
+    GEN_INSN(STI32, elem_val, tbl_elems, offset);
 
     return true;
 fail:
@@ -105,7 +105,7 @@ wasm_init_table(WASMModuleInstance *inst, uint32 tbl_idx, uint32 elem_idx,
     if (src > elem_len || elem_len - src < len)
         goto out_of_bounds;
 
-    bh_memcpy_s((uint8 *)(tbl) + offsetof(WASMTableInstance, base_addr)
+    bh_memcpy_s((uint8 *)tbl + offsetof(WASMTableInstance, elems)
                     + dst * sizeof(uint32),
                 (uint32)((tbl_sz - dst) * sizeof(uint32)),
                 elem->func_indexes + src, (uint32)(len * sizeof(uint32)));
@@ -140,8 +140,8 @@ jit_compile_op_table_init(JitCompContext *cc, uint32 tbl_idx,
         goto fail;
 
     GEN_INSN(CMP, cc->cmp_reg, res, NEW_CONST(I32, 0));
-    if (!jit_emit_exception(cc, JIT_EXCE_ALREADY_THROWN, JIT_OP_BLTS,
-                            cc->cmp_reg, NULL))
+    if (!jit_emit_exception(cc, EXCE_ALREADY_THROWN, JIT_OP_BLTS, cc->cmp_reg,
+                            NULL))
         goto fail;
 
     return true;
@@ -167,10 +167,10 @@ wasm_copy_table(WASMModuleInstance *inst, uint32 src_tbl_idx,
     if (dst_offset > dst_tbl_sz || dst_tbl_sz - dst_offset < len)
         goto out_of_bounds;
 
-    bh_memmove_s((uint8 *)(dst_tbl) + offsetof(WASMTableInstance, base_addr)
+    bh_memmove_s((uint8 *)dst_tbl + offsetof(WASMTableInstance, elems)
                      + dst_offset * sizeof(uint32),
                  (uint32)((dst_tbl_sz - dst_offset) * sizeof(uint32)),
-                 (uint8 *)(src_tbl) + offsetof(WASMTableInstance, base_addr)
+                 (uint8 *)src_tbl + offsetof(WASMTableInstance, elems)
                      + src_offset * sizeof(uint32),
                  (uint32)(len * sizeof(uint32)));
 
@@ -204,8 +204,8 @@ jit_compile_op_table_copy(JitCompContext *cc, uint32 src_tbl_idx,
         goto fail;
 
     GEN_INSN(CMP, cc->cmp_reg, res, NEW_CONST(I32, 0));
-    if (!jit_emit_exception(cc, JIT_EXCE_ALREADY_THROWN, JIT_OP_BLTS,
-                            cc->cmp_reg, NULL))
+    if (!jit_emit_exception(cc, EXCE_ALREADY_THROWN, JIT_OP_BLTS, cc->cmp_reg,
+                            NULL))
         goto fail;
 
     return true;
@@ -276,7 +276,7 @@ wasm_fill_table(WASMModuleInstance *inst, uint32 tbl_idx, uint32 dst,
         goto out_of_bounds;
 
     for (; len != 0; dst++, len--) {
-        ((uint32 *)(tbl->base_addr))[dst] = val;
+        tbl->elems[dst] = val;
     }
 
     return 0;
@@ -307,8 +307,8 @@ jit_compile_op_table_fill(JitCompContext *cc, uint32 tbl_idx)
         goto fail;
 
     GEN_INSN(CMP, cc->cmp_reg, res, NEW_CONST(I32, 0));
-    if (!jit_emit_exception(cc, JIT_EXCE_ALREADY_THROWN, JIT_OP_BLTS,
-                            cc->cmp_reg, NULL))
+    if (!jit_emit_exception(cc, EXCE_ALREADY_THROWN, JIT_OP_BLTS, cc->cmp_reg,
+                            NULL))
         goto fail;
 
     return true;

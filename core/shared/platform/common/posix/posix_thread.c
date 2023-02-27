@@ -61,8 +61,9 @@ os_thread_create_with_prio(korp_tid *tid, thread_start_routine_t start,
     pthread_attr_init(&tattr);
     pthread_attr_setdetachstate(&tattr, PTHREAD_CREATE_JOINABLE);
     if (pthread_attr_setstacksize(&tattr, stack_size) != 0) {
-        os_printf("Invalid thread stack size %u. Min stack size on Linux = %u",
-                  stack_size, PTHREAD_STACK_MIN);
+        os_printf("Invalid thread stack size %u. "
+                  "Min stack size on Linux = %u\n",
+                  stack_size, (unsigned int)PTHREAD_STACK_MIN);
         pthread_attr_destroy(&tattr);
         return BHT_ERROR;
     }
@@ -228,7 +229,17 @@ os_sem_post(korp_sem *sem)
 int
 os_sem_getvalue(korp_sem *sem, int *sval)
 {
+#if defined(__APPLE__)
+    /*
+     * macOS doesn't have working sem_getvalue.
+     * It's marked as deprecated in the system header.
+     * Mock it up here to avoid compile-time deprecation warnings.
+     */
+    errno = ENOSYS;
+    return -1;
+#else
     return sem_getvalue(sem, sval);
+#endif
 }
 
 int
@@ -415,6 +426,7 @@ os_thread_get_stack_boundary()
  */
 static os_thread_local_attribute bool thread_signal_inited = false;
 
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
 /* The signal alternate stack base addr */
 static os_thread_local_attribute uint8 *sigalt_stack_base_addr;
 
@@ -478,6 +490,7 @@ destroy_stack_guard_pages()
     os_mprotect(stack_min_addr, page_size * guard_page_count,
                 MMAP_PROT_READ | MMAP_PROT_WRITE);
 }
+#endif /* end of WASM_DISABLE_STACK_HW_BOUND_CHECK == 0 */
 
 static void
 mask_signals(int how)
@@ -543,13 +556,16 @@ int
 os_thread_signal_init(os_signal_handler handler)
 {
     struct sigaction sig_act;
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     stack_t sigalt_stack_info;
     uint32 map_size = SIG_ALT_STACK_SIZE;
     uint8 *map_addr;
+#endif
 
     if (thread_signal_inited)
         return 0;
 
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     if (!init_stack_guard_pages()) {
         os_printf("Failed to init stack guard pages\n");
         return -1;
@@ -571,13 +587,17 @@ os_thread_signal_init(os_signal_handler handler)
         os_printf("Failed to init signal alternate stack\n");
         goto fail2;
     }
+#endif
 
     memset(&prev_sig_act_SIGSEGV, 0, sizeof(struct sigaction));
     memset(&prev_sig_act_SIGBUS, 0, sizeof(struct sigaction));
 
     /* Install signal hanlder */
     sig_act.sa_sigaction = signal_callback;
-    sig_act.sa_flags = SA_SIGINFO | SA_ONSTACK | SA_NODEFER;
+    sig_act.sa_flags = SA_SIGINFO | SA_NODEFER;
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
+    sig_act.sa_flags |= SA_ONSTACK;
+#endif
     sigemptyset(&sig_act.sa_mask);
     if (sigaction(SIGSEGV, &sig_act, &prev_sig_act_SIGSEGV) != 0
         || sigaction(SIGBUS, &sig_act, &prev_sig_act_SIGBUS) != 0) {
@@ -585,12 +605,15 @@ os_thread_signal_init(os_signal_handler handler)
         goto fail3;
     }
 
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     sigalt_stack_base_addr = map_addr;
+#endif
     signal_handler = handler;
     thread_signal_inited = true;
     return 0;
 
 fail3:
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     memset(&sigalt_stack_info, 0, sizeof(stack_t));
     sigalt_stack_info.ss_flags = SS_DISABLE;
     sigalt_stack_info.ss_size = map_size;
@@ -599,17 +622,21 @@ fail2:
     os_munmap(map_addr, map_size);
 fail1:
     destroy_stack_guard_pages();
+#endif
     return -1;
 }
 
 void
 os_thread_signal_destroy()
 {
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     stack_t sigalt_stack_info;
+#endif
 
     if (!thread_signal_inited)
         return;
 
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
     /* Disable signal alternate stack */
     memset(&sigalt_stack_info, 0, sizeof(stack_t));
     sigalt_stack_info.ss_flags = SS_DISABLE;
@@ -619,6 +646,7 @@ os_thread_signal_destroy()
     os_munmap(sigalt_stack_base_addr, SIG_ALT_STACK_SIZE);
 
     destroy_stack_guard_pages();
+#endif
 
     thread_signal_inited = false;
 }
@@ -638,6 +666,7 @@ os_signal_unmask()
 void
 os_sigreturn()
 {
+#if WASM_DISABLE_STACK_HW_BOUND_CHECK == 0
 #if defined(__APPLE__)
 #define UC_RESET_ALT_STACK 0x80000000
     extern int __sigreturn(void *, int);
@@ -645,6 +674,7 @@ os_sigreturn()
     /* It's necessary to call __sigreturn to restore the sigaltstack state
        after exiting the signal handler. */
     __sigreturn(NULL, UC_RESET_ALT_STACK);
+#endif
 #endif
 }
 #endif /* end of OS_ENABLE_HW_BOUND_CHECK */

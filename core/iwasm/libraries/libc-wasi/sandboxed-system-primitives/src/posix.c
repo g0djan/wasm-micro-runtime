@@ -15,7 +15,6 @@
 #include "bh_platform.h"
 #include "wasmtime_ssp.h"
 #include "locking.h"
-#include "numeric_limits.h"
 #include "posix.h"
 #include "random.h"
 #include "refcount.h"
@@ -686,9 +685,20 @@ fd_table_insert_existing(struct fd_table *ft, __wasi_fd_t in, int out)
     struct fd_object *fo;
     __wasi_errno_t error;
 
-    if (fd_determine_type_rights(out, &type, &rights_base, &rights_inheriting)
-        != 0)
+    error =
+        fd_determine_type_rights(out, &type, &rights_base, &rights_inheriting);
+    if (error != 0) {
+#ifdef BH_PLATFORM_EGO
+        /**
+         * since it is an already opened file and we can assume the opened file
+         * has all necessary rights no matter how to get
+         */
+        if (error != __WASI_ENOTSUP)
+            return false;
+#else
         return false;
+#endif
+    }
 
     error = fd_object_new(type, &fo);
     if (error != 0)
@@ -2257,8 +2267,7 @@ convert_timestamp(__wasi_timestamp_t in, struct timespec *out)
     in /= 1000000000;
 
     // Clamp to the maximum in case it would overflow our system's time_t.
-    out->tv_sec =
-        (time_t)in < NUMERIC_MAX(time_t) ? (time_t)in : NUMERIC_MAX(time_t);
+    out->tv_sec = (time_t)in < BH_TIME_T_MAX ? (time_t)in : BH_TIME_T_MAX;
 }
 
 // Converts the provided timestamps and flags to a set of arguments for
@@ -2607,6 +2616,8 @@ wasmtime_ssp_poll_oneoff(
         }
 #endif
         *nevents = 1;
+        if (out[0].error != 0)
+            return convert_errno(out[0].error);
         return 0;
     }
 
@@ -2699,7 +2710,7 @@ wasmtime_ssp_poll_oneoff(
         timeout = ts > INT_MAX ? -1 : (int)ts;
     }
     else {
-        timeout = 1000;
+        timeout = -1;
     }
     int ret = poll(pfds, nsubscriptions, timeout);
 
@@ -3087,12 +3098,13 @@ wasi_ssp_sock_addr_resolve(
     size_t _max_info_size;
     size_t actual_info_size;
 
-    if (!ns_lookup_list_search(ns_lookup_list, host)) {
-        return __WASI_EACCES;
-    }
-
     if (!wamr_addr_info) {
         return __WASI_ENOMEM;
+    }
+
+    if (!ns_lookup_list_search(ns_lookup_list, host)) {
+        wasm_runtime_free(wamr_addr_info);
+        return __WASI_EACCES;
     }
 
     int ret = os_socket_addr_resolve(
@@ -3151,6 +3163,122 @@ wasi_ssp_sock_connect(
     if (BHT_OK != ret) {
         return convert_errno(errno);
     }
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_get_recv_buf_size(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, __wasi_size_t *size)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval;
+    socklen_t optlen = sizeof(optval);
+
+    ret = getsockopt(fd_number(fo), SOL_SOCKET, SO_RCVBUF, &optval, &optlen);
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    *size = optval;
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_get_reuse_addr(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, uint8_t *reuse)
+{
+
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval;
+    socklen_t optlen = sizeof(optval);
+
+    ret = getsockopt(fd_number(fo), SOL_SOCKET, SO_REUSEADDR, &optval, &optlen);
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    *reuse = optval;
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_get_reuse_port(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, uint8_t *reuse)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval;
+    socklen_t optlen = sizeof(optval);
+
+#if defined(SO_REUSEPORT) /* NuttX doesn't have SO_REUSEPORT */
+    ret = getsockopt(fd_number(fo), SOL_SOCKET, SO_REUSEPORT, &optval, &optlen);
+#else
+    errno = ENOTSUP;
+    ret = BHT_ERROR;
+    optval = 0;
+#endif /* defined(SO_REUSEPORT) */
+
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    *reuse = optval;
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_get_send_buf_size(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, __wasi_size_t *size)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval;
+    socklen_t optlen = sizeof(optval);
+
+    ret = getsockopt(fd_number(fo), SOL_SOCKET, SO_SNDBUF, &optval, &optlen);
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    *size = optval;
 
     return __WASI_ESUCCESS;
 }
@@ -3220,6 +3348,113 @@ wasi_ssp_sock_open(
                                max_inheriting, sockfd);
     if (error != __WASI_ESUCCESS) {
         return error;
+    }
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_set_recv_buf_size(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, __wasi_size_t size)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval = size;
+
+    ret = setsockopt(fd_number(fo), SOL_SOCKET, SO_RCVBUF, &optval,
+                     sizeof(optval));
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_set_reuse_addr(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, uint8_t reuse)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval = reuse;
+
+    ret = setsockopt(fd_number(fo), SOL_SOCKET, SO_REUSEADDR, &optval,
+                     sizeof(optval));
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_set_reuse_port(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, uint8_t reuse)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval = reuse;
+
+#if defined(SO_REUSEPORT) /* NuttX doesn't have SO_REUSEPORT */
+    ret = setsockopt(fd_number(fo), SOL_SOCKET, SO_REUSEPORT, &optval,
+                     sizeof(optval));
+#else
+    errno = ENOTSUP;
+    ret = BHT_ERROR;
+#endif /* defined(SO_REUSEPORT) */
+
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
+    }
+
+    return __WASI_ESUCCESS;
+}
+
+__wasi_errno_t
+wasi_ssp_sock_set_send_buf_size(
+#if !defined(WASMTIME_SSP_STATIC_CURFDS)
+    struct fd_table *curfds,
+#endif
+    __wasi_fd_t fd, __wasi_size_t size)
+{
+    struct fd_object *fo;
+    int ret;
+    __wasi_errno_t error = fd_object_get(curfds, &fo, fd, 0, 0);
+    if (error != __WASI_ESUCCESS)
+        return error;
+
+    int optval = size;
+
+    ret = setsockopt(fd_number(fo), SOL_SOCKET, SO_SNDBUF, &optval,
+                     sizeof(optval));
+
+    fd_object_release(fo);
+    if (BHT_OK != ret) {
+        return convert_errno(errno);
     }
 
     return __WASI_ESUCCESS;

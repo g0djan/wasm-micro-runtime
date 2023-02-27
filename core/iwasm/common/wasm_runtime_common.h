@@ -25,6 +25,9 @@
 extern "C" {
 #endif
 
+/* Internal use for setting default running mode */
+#define Mode_Default 0
+
 #if WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS != 0
 
 #define PUT_I64_TO_ADDR(addr, value)       \
@@ -369,9 +372,13 @@ typedef struct WASIContext {
     char **argv_list;
     char *env_buf;
     char **env_list;
+    uint32_t exit_code;
 } WASIContext;
 #else
-typedef uvwasi_t WASIContext;
+typedef struct WASIContext {
+    uvwasi_t uvwasi;
+    uint32_t exit_code;
+} WASIContext;
 #endif
 #endif
 
@@ -409,6 +416,13 @@ typedef struct wasm_frame_t {
     const char *func_name_wp;
 } WASMCApiFrame;
 
+#ifdef WASM_ENABLE_JIT
+typedef struct LLVMJITOptions {
+    uint32 opt_level;
+    uint32 size_level;
+} LLVMJITOptions;
+#endif
+
 #ifdef OS_ENABLE_HW_BOUND_CHECK
 /* Signal info passing to interp/aot signal handler */
 typedef struct WASMSignalInfo {
@@ -433,9 +447,27 @@ wasm_runtime_get_exec_env_tls(void);
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_init(void);
 
+/* Internal API */
+RunningMode
+wasm_runtime_get_default_running_mode(void);
+
+#if WASM_ENABLE_JIT != 0
+/* Internal API */
+LLVMJITOptions
+wasm_runtime_get_llvm_jit_options(void);
+#endif
+
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_full_init(RuntimeInitArgs *init_args);
+
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_running_mode_supported(RunningMode running_mode);
+
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_set_default_running_mode(RunningMode running_mode);
 
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN void
@@ -481,8 +513,21 @@ wasm_runtime_instantiate(WASMModuleCommon *module, uint32 stack_size,
                          uint32 error_buf_size);
 
 /* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_set_running_mode(wasm_module_inst_t module_inst,
+                              RunningMode running_mode);
+
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN RunningMode
+wasm_runtime_get_running_mode(wasm_module_inst_t module_inst);
+
+/* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_deinstantiate(WASMModuleInstanceCommon *module_inst);
+
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN WASMModuleCommon *
+wasm_runtime_get_module(WASMModuleInstanceCommon *module_inst);
 
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN WASMFunctionInstanceCommon *
@@ -546,6 +591,12 @@ wasm_runtime_set_user_data(WASMExecEnv *exec_env, void *user_data);
 WASM_RUNTIME_API_EXTERN void *
 wasm_runtime_get_user_data(WASMExecEnv *exec_env);
 
+#ifdef OS_ENABLE_HW_BOUND_CHECK
+/* Access exception check guard page to trigger the signal handler */
+void
+wasm_runtime_access_exce_check_guard_page();
+#endif
+
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_call_wasm(WASMExecEnv *exec_env,
@@ -564,6 +615,11 @@ wasm_runtime_call_wasm_v(WASMExecEnv *exec_env,
                          uint32 num_results, wasm_val_t *results,
                          uint32 num_args, ...);
 
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_call_indirect(WASMExecEnv *exec_env, uint32 element_index,
+                           uint32 argc, uint32 argv[]);
+
 #if WASM_ENABLE_DEBUG_INTERP != 0
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN uint32
@@ -574,27 +630,6 @@ wasm_runtime_start_debug_instance_with_port(WASMExecEnv *exec_env,
 WASM_RUNTIME_API_EXTERN uint32
 wasm_runtime_start_debug_instance(WASMExecEnv *exec_env);
 #endif
-
-/**
- * Call a function reference of a given WASM runtime instance with
- * arguments.
- *
- * @param exec_env the execution environment to call the function
- *   which must be created from wasm_create_exec_env()
- * @param element_indices the function ference indicies, usually
- *   prvovided by the caller of a registed native function
- * @param argc the number of arguments
- * @param argv the arguments.  If the function method has return value,
- *   the first (or first two in case 64-bit return value) element of
- *   argv stores the return value of the called WASM function after this
- *   function returns.
- *
- * @return true if success, false otherwise and exception will be thrown,
- *   the caller can call wasm_runtime_get_exception to get exception info.
- */
-bool
-wasm_runtime_call_indirect(WASMExecEnv *exec_env, uint32 element_indices,
-                           uint32 argc, uint32 argv[]);
 
 bool
 wasm_runtime_create_exec_env_singleton(WASMModuleInstanceCommon *module_inst);
@@ -719,9 +754,6 @@ void
 wasm_runtime_unregister_module(const WASMModuleCommon *module);
 
 bool
-wasm_runtime_is_module_registered(const char *module_name);
-
-bool
 wasm_runtime_add_loading_module(const char *module_name, char *error_buf,
                                 uint32 error_buf_size);
 
@@ -770,6 +802,10 @@ wasm_runtime_is_wasi_mode(WASMModuleInstanceCommon *module_inst);
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN WASMFunctionInstanceCommon *
 wasm_runtime_lookup_wasi_start_function(WASMModuleInstanceCommon *module_inst);
+
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN uint32_t
+wasm_runtime_get_wasi_exit_code(WASMModuleInstanceCommon *module_inst);
 
 bool
 wasm_runtime_init_wasi(WASMModuleInstanceCommon *module_inst,
@@ -855,17 +891,6 @@ wasm_runtime_dump_line_buf_impl(const char *line_buf, bool dump_or_print,
 WASMModuleCommon *
 wasm_exec_env_get_module(WASMExecEnv *exec_env);
 
-/**
- * Enlarge wasm memory data space.
- *
- * @param module the wasm module instance
- * @param inc_page_count denote the page number to increase
- * @return return true if enlarge successfully, false otherwise
- */
-bool
-wasm_runtime_enlarge_memory(WASMModuleInstanceCommon *module,
-                            uint32 inc_page_count);
-
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_register_natives(const char *module_name,
@@ -877,6 +902,11 @@ WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_register_natives_raw(const char *module_name,
                                   NativeSymbol *native_symbols,
                                   uint32 n_native_symbols);
+
+/* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_unregister_natives(const char *module_name,
+                                NativeSymbol *native_symbols);
 
 bool
 wasm_runtime_invoke_native(WASMExecEnv *exec_env, void *func_ptr,
@@ -902,6 +932,16 @@ wasm_runtime_dump_module_inst_mem_consumption(
 
 void
 wasm_runtime_dump_exec_env_mem_consumption(const WASMExecEnv *exec_env);
+
+bool
+wasm_runtime_get_table_elem_type(const WASMModuleCommon *module_comm,
+                                 uint32 table_idx, uint8 *out_elem_type,
+                                 uint32 *out_min_size, uint32 *out_max_size);
+
+bool
+wasm_runtime_get_table_inst_elem_type(
+    const WASMModuleInstanceCommon *module_inst_comm, uint32 table_idx,
+    uint8 *out_elem_type, uint32 *out_min_size, uint32 *out_max_size);
 
 bool
 wasm_runtime_get_export_func_type(const WASMModuleCommon *module_comm,
@@ -936,6 +976,14 @@ wasm_runtime_show_app_heap_corrupted_prompt();
 void
 wasm_runtime_destroy_custom_sections(WASMCustomSection *section_list);
 #endif
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_import_func_linked(const char *module_name,
+                                   const char *func_name);
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_import_global_linked(const char *module_name,
+                                     const char *global_name);
 
 #ifdef __cplusplus
 }

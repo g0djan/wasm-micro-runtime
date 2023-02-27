@@ -1,13 +1,15 @@
 # Copyright (C) 2019 Intel Corporation.  All rights reserved.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-cmake_minimum_required (VERSION 2.9)
+cmake_minimum_required (VERSION 3.0)
 
 project (iwasm)
 
 set (CMAKE_VERBOSE_MAKEFILE OFF)
 
-string (TOLOWER ${CMAKE_HOST_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
+if (NOT DEFINED WAMR_BUILD_PLATFORM)
+  string (TOLOWER ${CMAKE_HOST_SYSTEM_NAME} WAMR_BUILD_PLATFORM)
+endif ()
 
 # Reset default linker flags
 set (CMAKE_SHARED_LIBRARY_LINK_C_FLAGS "")
@@ -83,6 +85,11 @@ if (NOT DEFINED WAMR_BUILD_LIB_PTHREAD)
   set (WAMR_BUILD_LIB_PTHREAD 0)
 endif ()
 
+if (NOT DEFINED WAMR_BUILD_LIB_WASI_THREADS)
+  # Disable wasi threads library by default
+  set (WAMR_BUILD_LIB_WASI_THREADS 0)
+endif ()
+
 if (NOT DEFINED WAMR_BUILD_MINI_LOADER)
   # Disable wasm mini loader by default
   set (WAMR_BUILD_MINI_LOADER 0)
@@ -107,9 +114,7 @@ set (WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR})
 
 include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 
-set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections -pie -fPIE")
-
-set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security -Wshadow")
+set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -Wextra -Wformat -Wformat-security -Wshadow -Wno-unused-parameter")
 # set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wconversion -Wsign-conversion")
 
 set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wformat -Wformat-security -Wno-unused")
@@ -133,16 +138,25 @@ include (${SHARED_DIR}/utils/uncommon/shared_uncommon.cmake)
 # STATIC LIBRARY
 add_library(iwasm_static STATIC ${WAMR_RUNTIME_LIB_SOURCE})
 set_target_properties (iwasm_static PROPERTIES OUTPUT_NAME vmlib)
+target_include_directories(iwasm_static INTERFACE ${WAMR_ROOT_DIR}/core/iwasm/include)
+target_link_libraries (iwasm_static INTERFACE ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl -lpthread)
+if (WAMR_BUILD_WASM_CACHE EQUAL 1)
+  target_link_libraries(iwasm_static INTERFACE boringssl_crypto)
+endif ()
 
 install (TARGETS iwasm_static ARCHIVE DESTINATION lib)
 
 # SHARED LIBRARY
 add_library (iwasm_shared SHARED ${WAMR_RUNTIME_LIB_SOURCE})
 set_target_properties (iwasm_shared PROPERTIES OUTPUT_NAME iwasm)
-target_link_libraries (iwasm_shared ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl -lpthread)
+target_include_directories(iwasm_shared INTERFACE ${WAMR_ROOT_DIR}/core/iwasm/include)
+target_link_libraries (iwasm_shared INTERFACE ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl -lpthread)
+if (WAMR_BUILD_WASM_CACHE EQUAL 1)
+  target_link_libraries(iwasm_shared INTERFACE boringssl_crypto)
+endif ()
 
 if (MINGW)
-target_link_libraries (iwasm_shared -lWs2_32)
+  target_link_libraries (iwasm_shared -lWs2_32)
 endif ()
 
 install (TARGETS iwasm_shared LIBRARY DESTINATION lib)

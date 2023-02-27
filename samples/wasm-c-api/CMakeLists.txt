@@ -1,7 +1,9 @@
 # Copyright (C) 2019 Intel Corporation. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-cmake_minimum_required (VERSION 2.9)
+cmake_minimum_required (VERSION 3.14)
+
+include(CheckPIESupported)
 
 if (NOT WAMR_BUILD_PLATFORM STREQUAL "windows")
   project(c-api)
@@ -71,7 +73,6 @@ endif()
 
 if (NOT MSVC)
   # compiling and linking flags
-  set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -pie -fPIE")
   if (NOT (CMAKE_C_COMPILER MATCHES ".*clang.*" OR CMAKE_C_COMPILER_ID MATCHES ".*Clang"))
     set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
   endif ()
@@ -91,6 +92,10 @@ if (MSVC)
   target_compile_definitions(vmlib PRIVATE WASM_API_EXTERN=)
 endif()
 target_link_libraries (vmlib ${LLVM_AVAILABLE_LIBS} ${UV_A_LIBS} -lm -ldl -lpthread)
+
+if (WAMR_BUILD_WASM_CACHE EQUAL 1)
+  target_link_libraries(vmlib boringssl_crypto)
+endif ()
 ################################################
 
 ################  application related  ################
@@ -103,7 +108,16 @@ find_program(WAT2WASM
 
 if(NOT WAT2WASM)
   message(SEND_ERROR "can not find wat2wasm")
+else ()
+  execute_process(COMMAND ${WAT2WASM} --version
+                  OUTPUT_VARIABLE WAT2WASM_VERSION_OUTPUT)
+  string(STRIP ${WAT2WASM_VERSION_OUTPUT} WAT2WASM_VERSION)
+  message("-- Found wat2wasm ${WAT2WASM_VERSION}")
 endif()
+
+if (${WAT2WASM_VERSION} VERSION_LESS 1.0.26)
+  set(WAT2WASM_FLAGS "--enable-reference-types")
+endif ()
 
 if(${WAMR_BUILD_AOT} EQUAL 1)
   ## locate wamrc
@@ -122,25 +136,26 @@ include (${SHARED_DIR}/utils/uncommon/shared_uncommon.cmake)
 
 set(MM_UTIL src/utils/multi_module_utils.c)
 # build executable for each .c
-set(EXAMPLES
-  callback
-  callback_chain
-  empty_imports
-  global
-  hello
-  hostref
-  memory
-  reflect
-  table
-  trap
-)
+list(APPEND EXAMPLES callback callback_chain empty_imports global hello hostref memory reflect table trap)
+# FIXME enable both in the future
+#list(APPEND EXAMPLES clone threads)
+# FIXME
+# if(WAMR_BUILD_JIT EQUAL 1 AND WAMR_BUILD_LAZY_JIT EQUAL 0)
+#     list(APPEND EXAMPLES serialize)
+# endif()
+
+check_pie_supported()
+
+include(CTest)
+enable_testing()
 
 foreach(EX ${EXAMPLES})
   set(SRC ${CMAKE_CURRENT_LIST_DIR}/src/${EX}.c)
 
   add_executable(${EX} ${SRC} ${UNCOMMON_SHARED_SOURCE} ${MM_UTIL})
+  set_target_properties (${EX} PROPERTIES POSITION_INDEPENDENT_CODE ON)
   target_include_directories(${EX} PRIVATE ${UNCOMMON_SHARED_DIR})
-  target_link_libraries(${EX} vmlib -lpthread -lm)
+  target_link_libraries(${EX} vmlib)
   if (MSVC)
     target_compile_definitions(${EX} PRIVATE WASM_API_EXTERN=)
   endif()
@@ -149,7 +164,7 @@ foreach(EX ${EXAMPLES})
   set(WAT ${CMAKE_CURRENT_LIST_DIR}/src/${EX}.wat)
 
   add_custom_target(${EX}_WASM
-    COMMAND ${WAT2WASM} ${WAT} --enable-reference-types -o ${PROJECT_BINARY_DIR}/${EX}.wasm
+    COMMAND ${WAT2WASM} ${WAT} ${WAT2WASM_FLAGS} -o ${PROJECT_BINARY_DIR}/${EX}.wasm
     DEPENDS ${WAT}
     BYPRODUCTS ${PROJECT_BINARY_DIR}/${EX}.wasm
     VERBATIM
@@ -168,6 +183,12 @@ foreach(EX ${EXAMPLES})
     )
     add_dependencies(${EX} ${EX}_AOT)
   endif()
+
+  # run `ctest --test-dir build`
+  add_test(NAME Test_${EX}
+    COMMAND ./${EX}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
 endforeach()
 
 if (CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -176,14 +197,5 @@ if (CMAKE_BUILD_TYPE STREQUAL "Debug")
     REQUIRED
   )
 
-  if(VALGRIND)
-    foreach(EX ${EXAMPLES})
-      add_custom_target(${EX}_LEAK_TEST
-        COMMAND ${VALGRIND} --tool=memcheck --leak-check=yes ./${EX}
-        DEPENDS ${EX} ${EX}_WASM
-        VERBATIM
-        COMMENT "run a leak check on ${EX}"
-      )
-    endforeach()
-  endif (VALGRIND)
-endif (CMAKE_BUILD_TYPE STREQUAL "Debug")
+  # run `ctest -T memcheck -V --test-dir build`
+endif()

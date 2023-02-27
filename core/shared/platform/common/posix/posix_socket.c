@@ -159,17 +159,6 @@ os_socket_bind(bh_socket_t socket, const char *host, int *port)
         goto fail;
     }
 
-    if (addr.ss_family == AF_INET) {
-        *port = ntohs(((struct sockaddr_in *)&addr)->sin_port);
-    }
-    else {
-#ifdef IPPROTO_IPV6
-        *port = ntohs(((struct sockaddr_in6 *)&addr)->sin6_port);
-#else
-        goto fail;
-#endif
-    }
-
     ret = fcntl(socket, F_SETFD, FD_CLOEXEC);
 #endif
     if (ret < 0) {
@@ -189,6 +178,17 @@ os_socket_bind(bh_socket_t socket, const char *host, int *port)
     socklen = sizeof(addr);
     if (getsockname(socket, (void *)&addr, &socklen) == -1) {
         goto fail;
+    }
+
+    if (addr.ss_family == AF_INET) {
+        *port = ntohs(((struct sockaddr_in *)&addr)->sin_port);
+    }
+    else {
+#ifdef IPPROTO_IPV6
+        *port = ntohs(((struct sockaddr_in6 *)&addr)->sin6_port);
+#else
+        goto fail;
+#endif
     }
 
     return BHT_OK;
@@ -227,10 +227,7 @@ int
 os_socket_accept(bh_socket_t server_sock, bh_socket_t *sock, void *addr,
                  unsigned int *addrlen)
 {
-    struct sockaddr addr_tmp;
-    unsigned int len = sizeof(struct sockaddr);
-
-    *sock = accept(server_sock, &addr_tmp, &len);
+    *sock = accept(server_sock, addr, addrlen);
 
     if (*sock < 0) {
         return BHT_ERROR;
@@ -280,9 +277,12 @@ os_socket_recv_from(bh_socket_t socket, void *buf, unsigned int len, int flags,
         return ret;
     }
 
-    if (src_addr) {
-        sockaddr_to_bh_sockaddr((struct sockaddr *)&sock_addr, socklen,
-                                src_addr);
+    if (src_addr && socklen > 0) {
+        if (sockaddr_to_bh_sockaddr((struct sockaddr *)&sock_addr, socklen,
+                                    src_addr)
+            == BHT_ERROR) {
+            return -1;
+        }
     }
 
     return ret;
@@ -303,7 +303,7 @@ os_socket_send_to(bh_socket_t socket, const void *buf, unsigned int len,
 
     bh_sockaddr_to_sockaddr(dest_addr, &sock_addr, &socklen);
 
-    return sendto(socket, buf, len, 0, (const struct sockaddr *)&sock_addr,
+    return sendto(socket, buf, len, flags, (const struct sockaddr *)&sock_addr,
                   socklen);
 }
 
@@ -415,8 +415,14 @@ os_socket_addr_resolve(const char *host, const char *service,
                 continue;
             }
 
-            sockaddr_to_bh_sockaddr(res->ai_addr, sizeof(struct sockaddr_in),
-                                    &addr_info[pos].sockaddr);
+            ret = sockaddr_to_bh_sockaddr(res->ai_addr,
+                                          sizeof(struct sockaddr_in),
+                                          &addr_info[pos].sockaddr);
+
+            if (ret == BHT_ERROR) {
+                freeaddrinfo(result);
+                return BHT_ERROR;
+            }
 
             addr_info[pos].is_tcp = res->ai_socktype == SOCK_STREAM;
         }

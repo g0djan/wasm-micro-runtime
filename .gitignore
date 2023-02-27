@@ -1,12 +1,14 @@
 .cache
 .vs
 .vscode
+.venv
 /.idea
 **/cmake-build-*/
 **/*build/
 *.obj
 *.a
 *.so
+.DS_Store
 
 core/deps/**
 core/shared/mem-alloc/tlsf
@@ -28,3 +30,8 @@ tests/wamr-test-suites/workspace
 samples/socket-api/wasm-src/inc/pthread.h
 
 **/__pycache__
+
+tests/benchmarks/coremark/coremark*
+
+samples/workload/include/**
+!samples/workload/include/.gitkeep

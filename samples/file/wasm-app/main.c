@@ -12,12 +12,13 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#define PATH_TEST_FILE "test.txt"
+#define PATH_TEST_FOLDER "./test"
+#define PATH_TEST_FILE (PATH_TEST_FOLDER "/test.txt")
 #define FILE_TEXT "Hello, world!"
 #define WORLD_OFFSET 7
 #define NAME_REPLACMENT "James"
 #define NAME_REPLACMENT_LEN (sizeof(NAME_REPLACMENT) - 1)
-#define ADDITIONAL_SPACE 10
+#define ADDITIONAL_SPACE 1 * 1024 * 1024
 
 int
 main(int argc, char **argv)
@@ -26,6 +27,11 @@ main(int argc, char **argv)
     const char *text = FILE_TEXT;
     char buffer[1000];
     int ret;
+    long long stat_size;
+
+    // Test: Create a folder to store the file, if it does not exist yet
+    ret = mkdir(PATH_TEST_FOLDER, 777);
+    assert(ret == 0 || (ret == -1 && errno == EEXIST));
 
     // Test: File opening (fopen)
     printf("Opening a file..\n");
@@ -94,7 +100,7 @@ main(int argc, char **argv)
     printf("[Test] Reading at specified offset passed.\n");
 
     // Test: allocate more space to the file (posix_fallocate)
-    printf("Allocate more space to the file..\n");
+    printf("Allocate more space to the file (posix_fallocate)..\n");
     posix_fallocate(fileno(file), ftell(file), ADDITIONAL_SPACE);
     printf("File current offset: %ld\n", ftell(file));
     printf("Moving to the end..\n");
@@ -104,8 +110,8 @@ main(int argc, char **argv)
     printf("[Test] Allocation or more space passed.\n");
 
     // Test: allocate more space to the file (ftruncate)
-    printf("Extend the file size of 10 bytes using ftruncate..\n");
-    ftruncate(fileno(file), ftell(file) + 10);
+    printf("Allocate more space to the file (ftruncate)..\n");
+    ftruncate(fileno(file), ftell(file) + ADDITIONAL_SPACE);
     assert(ftell(file) == strlen(text) + ADDITIONAL_SPACE);
     printf("File current offset: %ld\n", ftell(file));
     printf("Moving to the end..\n");
@@ -114,17 +120,50 @@ main(int argc, char **argv)
     assert(ftell(file) == strlen(text) + 2 * ADDITIONAL_SPACE);
     printf("[Test] Extension of the file size passed.\n");
 
-    // Test: closing the file (fclose)
-    printf("Closing from the file..\n");
-    ret = fclose(file);
-    assert(ret == 0);
-    printf("[Test] Closing file passed.\n");
+    // Test: allocate more space to the file (fseek)
+    printf("Allocate more space to the file (fseek) from the start..\n");
+    printf("File current offset: %ld\n", ftell(file));
+    fseek(file, 3 * ADDITIONAL_SPACE, SEEK_SET);
+    printf("File current offset: %ld\n", ftell(file));
+    assert(ftell(file) == 3 * ADDITIONAL_SPACE);
+    printf("[Test] Extension of the file size passed.\n");
+
+    // Test: allocate more space to the file (fseek)
+    printf("Allocate more space to the file (fseek) from the end..\n");
+    printf("File current offset: %ld\n", ftell(file));
+    fseek(file, ADDITIONAL_SPACE, SEEK_END);
+    printf("File current offset: %ld\n", ftell(file));
+    assert(ftell(file) == 4 * ADDITIONAL_SPACE);
+    printf("[Test] Extension of the file size passed.\n");
+
+    // Test: allocate more space to the file (fseek)
+    printf("Allocate more space to the file (fseek) from the middle..\n");
+    fseek(file, 3 * ADDITIONAL_SPACE, SEEK_SET);
+    printf("File current offset: %ld\n", ftell(file));
+    fseek(file, 2 * ADDITIONAL_SPACE, SEEK_CUR);
+    printf("File current offset: %ld\n", ftell(file));
+    assert(ftell(file) == 5 * ADDITIONAL_SPACE);
+    printf("[Test] Extension of the file size passed.\n");
 
     // Display some debug information
     printf("Getting the size of the file on disk..\n");
     struct stat st;
     stat(PATH_TEST_FILE, &st);
-    printf("The file size is %lld.\n", st.st_size);
+    stat_size = st.st_size;
+    assert(stat_size != 0);
+
+    // Compare with the size from fstat
+    fstat(fileno(file), &st);
+    printf("The file size is: %lld (stat), %lld (fstat).\n", stat_size,
+           st.st_size);
+    assert(stat_size != 0);
+    assert(stat_size == st.st_size);
+
+    // Test: closing the file (fclose)
+    printf("Closing from the file..\n");
+    ret = fclose(file);
+    assert(ret == 0);
+    printf("[Test] Closing file passed.\n");
 
     printf("All the tests passed!\n");
 

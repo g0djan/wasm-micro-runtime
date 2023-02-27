@@ -3,12 +3,12 @@
 Prepare WASM building environments
 ==================================
 
-For C and C++, WASI-SDK version 12.0+ is the major tool supported by WAMR to build WASM applications. Also, we can use [Emscripten SDK (EMSDK)](https://github.com/emscripten-core/emsdk), but it is not recommended. And there are some other compilers such as the standard clang compiler, which might also work [here](./other_wasm_compilers.md).
+For C and C++, WASI-SDK version 19.0+ is the major tool supported by WAMR to build WASM applications. Also, we can use [Emscripten SDK (EMSDK)](https://github.com/emscripten-core/emsdk), but it is not recommended. And there are some other compilers such as the standard clang compiler, which might also work [here](./other_wasm_compilers.md).
 
 To install WASI SDK, please download the [wasi-sdk release](https://github.com/CraneStation/wasi-sdk/releases) and extract the archive to default path `/opt/wasi-sdk`.
 
 The official *wasi-sdk release* doesn't fully support *latest 128-bit SIMD spec* yet. WAMR provides a script in [build-wasi-sdk](../test-tools/build-wasi-sdk/) to generate
-another wasi-sdk with *llvm-13* from source code and installs it at *../test-tools/wasi-sdk*. If you plan to build WASM applications with *latest 128-bit SIMD*, please use it instead of the official release.
+another wasi-sdk with *llvm-15* from source code and installs it at *../test-tools/wasi-sdk*. If you plan to build WASM applications with *latest 128-bit SIMD*, please use it instead of the official release.
 
 And [sample workloads](../samples/workload) are using the self-compiled wasi-sdk.
 
@@ -126,6 +126,18 @@ If we want to build the wasm app with wasi mode, we may build the wasm app with 
 
 to generate a wasm binary with wasi mode, the auxiliary stack size is 8192 bytes, initial memory size is 64 KB,  heap base global and data end global are exported, wasi entry function exported (_start function), and all symbols are stripped. Note that it is wasi mode, so libc-wasi should be enabled by runtime embedder or iwasm (with `cmake -DWAMR_BUILD_LIBC_WASI=1`, enabled by iwasm in Linux by default), and normally no need to export main function, by default _start function is executed by iwasm.
 
+> Note: for the Rust project, we can set these flags by setting the `rustflags` in the Cargo configuration file, e.g. `<project_dir>/.cargo/config.toml` or `$CARGO_HOME/config.toml`, for example:
+> ```toml
+> [build]
+> rustflags = [
+>   "-C", "link-arg=--initial-memory=65536",
+>   "-C", "link-arg=-zstack-size=8192",
+>   "-C", "link-arg=--export=__heap_base",
+>   "-C", "link-arg=--export=__data_end",
+>   "-C", "link-arg=--strip-all",
+> ]
+> ```
+
 ## 2. How to reduce the footprint?
 
 Firstly if libc-builtin (-nostdlib) mode meets the requirements, e.g. there are no file io operations in wasm app, we should build the wasm app with -nostdlib option as possible as we can, since the compiler doesn't build the libc source code into wasm bytecodes, which greatly reduces the binary size.
@@ -138,11 +150,37 @@ Firstly if libc-builtin (-nostdlib) mode meets the requirements, e.g. there are 
   ```
   If the two globals are exported, and there are no memory.grow and memory.size opcodes (normally nostdlib mode doesn't introduce these opcodes since the libc malloc function isn't built into wasm bytecode), WAMR runtime will truncate the linear memory at the place of \__heap_base and append app heap to the end, so we don't need to allocate the memory specified by `-Wl,--initial-memory=n` which must be at least 64 KB. This is helpful for some embedded devices whose memory resource might be limited.
 
+> For the Rust project, please set the flags in the Cargo configuration file, for example:
+> ```toml
+> [build]
+> rustflags = [
+>   "-C", "link-arg=--export=__heap_base",
+>   "-C", "link-arg=--export=__data_end",
+>   "-C", "link-arg=--initial-memory=65536",
+> ]
+> ```
+
 - reduce auxiliary stack size
 
   The auxiliary stack is an area of linear memory, normally the size is 64 KB by default which might be a little large for embedded devices and partly used, we can use `-z stack-size=n` to set its size.
 
+> For the Rust project, please set the flag in the Cargo configuration file, for example:
+> ```toml
+> [build]
+> rustflags = [
+>   "-C", "link-arg=-zstack-size=8192"
+> ]
+> ```
+
 - use -O3 and -Wl,--strip-all
+
+> For the Rust project, please set the flag in the Cargo configuration file, for example:
+> ```toml
+> [build]
+> rustflags = [
+>  "-C", "link-arg=--strip-all"
+> ]
+> ```
 
 - reduce app heap size when running iwasm
 

@@ -6,6 +6,7 @@
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -32,11 +33,27 @@ print_help()
     printf("  -v=n                     Set log verbose level (0 to 5, default is 2) larger\n"
            "                           level with more log\n");
 #endif
-    printf("  --stack-size=n           Set maximum stack size in bytes, default is 16 KB\n");
+#if WASM_ENABLE_INTERP != 0
+    printf("  --interp                 Run the wasm app with interpreter mode\n");
+#endif
+#if WASM_ENABLE_FAST_JIT != 0
+    printf("  --fast-jit               Run the wasm app with fast jit mode\n");
+#endif
+#if WASM_ENABLE_JIT != 0
+    printf("  --llvm-jit               Run the wasm app with llvm jit mode\n");
+#endif
+#if WASM_ENABLE_JIT != 0 && WASM_ENABLE_FAST_JIT != 0 && WASM_ENABLE_LAZY_JIT != 0
+    printf("  --multi-tier-jit         Run the wasm app with multi-tier jit mode\n");
+#endif
+    printf("  --stack-size=n           Set maximum stack size in bytes, default is 64 KB\n");
     printf("  --heap-size=n            Set maximum heap size in bytes, default is 16 KB\n");
 #if WASM_ENABLE_FAST_JIT != 0
     printf("  --jit-codecache-size=n   Set fast jit maximum code cache size in bytes,\n");
     printf("                           default is %u KB\n", FAST_JIT_DEFAULT_CODE_CACHE_SIZE / 1024);
+#endif
+#if WASM_ENABLE_JIT != 0
+    printf("  --llvm-jit-size-level=n  Set LLVM JIT size level, default is 3\n");
+    printf("  --llvm-jit-opt-level=n   Set LLVM JIT optimization level, default is 3\n");
 #endif
     printf("  --repl                   Start a very simple REPL (read-eval-print-loop) mode\n"
            "                           that runs commands in the form of \"FUNC ARG...\"\n");
@@ -66,7 +83,7 @@ print_help()
     printf("  --module-path=<path>     Indicate a module search path. default is current\n"
            "                           directory('./')\n");
 #endif
-#if WASM_ENABLE_LIB_PTHREAD != 0
+#if WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
     printf("  --max-threads=n          Set maximum thread number per cluster, default is 4\n");
 #endif
 #if WASM_ENABLE_DEBUG_INTERP != 0
@@ -78,7 +95,7 @@ print_help()
 }
 /* clang-format on */
 
-static void *
+static const void *
 app_instance_main(wasm_module_inst_t module_inst)
 {
     const char *exception;
@@ -86,17 +103,17 @@ app_instance_main(wasm_module_inst_t module_inst)
     wasm_application_execute_main(module_inst, app_argc, app_argv);
     if ((exception = wasm_runtime_get_exception(module_inst)))
         printf("%s\n", exception);
-    return NULL;
+    return exception;
 }
 
-static void *
+static const void *
 app_instance_func(wasm_module_inst_t module_inst, const char *func_name)
 {
     wasm_application_execute_func(module_inst, func_name, app_argc - 1,
                                   app_argv + 1);
     /* The result of wasm function or exception info was output inside
        wasm_application_execute_func(), here we don't output them again. */
-    return NULL;
+    return wasm_runtime_get_exception(module_inst);
 }
 
 /**
@@ -149,7 +166,9 @@ app_instance_repl(wasm_module_inst_t module_inst)
     size_t len = 0;
     ssize_t n;
 
-    while ((printf("webassembly> "), n = getline(&cmd, &len, stdin)) != -1) {
+    while ((printf("webassembly> "), fflush(stdout),
+            n = getline(&cmd, &len, stdin))
+           != -1) {
         bh_assert(n > 0);
         if (cmd[n - 1] == '\n') {
             if (n == 1)
@@ -245,6 +264,46 @@ load_and_register_native_libs(const char **native_lib_list,
 
     return native_handle_count;
 }
+
+static void
+unregister_and_unload_native_libs(uint32 native_lib_count,
+                                  void **native_handle_list)
+{
+    uint32 i, n_native_symbols;
+    NativeSymbol *native_symbols;
+    char *module_name;
+    void *handle;
+
+    for (i = 0; i < native_lib_count; i++) {
+        handle = native_handle_list[i];
+
+        /* lookup get_native_lib func */
+        get_native_lib_func get_native_lib = dlsym(handle, "get_native_lib");
+        if (!get_native_lib) {
+            LOG_WARNING("warning: failed to lookup `get_native_lib` function "
+                        "from native lib %p",
+                        handle);
+            continue;
+        }
+
+        n_native_symbols = get_native_lib(&module_name, &native_symbols);
+        if (n_native_symbols == 0 || module_name == NULL
+            || native_symbols == NULL) {
+            LOG_WARNING("warning: get_native_lib returned different values for "
+                        "native lib %p",
+                        handle);
+            continue;
+        }
+
+        /* unregister native symbols */
+        if (!wasm_runtime_unregister_natives(module_name, native_symbols)) {
+            LOG_WARNING("warning: failed to unregister native lib %p", handle);
+            continue;
+        }
+
+        dlclose(handle);
+    }
+}
 #endif /* BH_HAS_DLFCN */
 
 #if WASM_ENABLE_MULTI_MODULE != 0
@@ -301,12 +360,17 @@ main(int argc, char *argv[])
     const char *func_name = NULL;
     uint8 *wasm_file_buf = NULL;
     uint32 wasm_file_size;
-    uint32 stack_size = 16 * 1024, heap_size = 16 * 1024;
+    uint32 stack_size = 64 * 1024, heap_size = 16 * 1024;
 #if WASM_ENABLE_FAST_JIT != 0
     uint32 jit_code_cache_size = FAST_JIT_DEFAULT_CODE_CACHE_SIZE;
 #endif
+#if WASM_ENABLE_JIT != 0
+    uint32 llvm_jit_size_level = 3;
+    uint32 llvm_jit_opt_level = 3;
+#endif
     wasm_module_t wasm_module = NULL;
     wasm_module_inst_t wasm_module_inst = NULL;
+    RunningMode running_mode = 0;
     RuntimeInitArgs init_args;
     char error_buf[128] = { 0 };
 #if WASM_ENABLE_LOG != 0
@@ -328,7 +392,7 @@ main(int argc, char *argv[])
     const char *native_lib_list[8] = { NULL };
     uint32 native_lib_count = 0;
     void *native_handle_list[8] = { NULL };
-    uint32 native_handle_count = 0, native_handle_idx;
+    uint32 native_handle_count = 0;
 #endif
 #if WASM_ENABLE_DEBUG_INTERP != 0
     char *ip_addr = NULL;
@@ -344,6 +408,27 @@ main(int argc, char *argv[])
             }
             func_name = argv[0];
         }
+#if WASM_ENABLE_INTERP != 0
+        else if (!strcmp(argv[0], "--interp")) {
+            running_mode = Mode_Interp;
+        }
+#endif
+#if WASM_ENABLE_FAST_JIT != 0
+        else if (!strcmp(argv[0], "--fast-jit")) {
+            running_mode = Mode_Fast_JIT;
+        }
+#endif
+#if WASM_ENABLE_JIT != 0
+        else if (!strcmp(argv[0], "--llvm-jit")) {
+            running_mode = Mode_LLVM_JIT;
+        }
+#endif
+#if WASM_ENABLE_JIT != 0 && WASM_ENABLE_FAST_JIT != 0 \
+    && WASM_ENABLE_LAZY_JIT != 0
+        else if (!strcmp(argv[0], "--multi-tier-jit")) {
+            running_mode = Mode_Multi_Tier_JIT;
+        }
+#endif
 #if WASM_ENABLE_LOG != 0
         else if (!strncmp(argv[0], "-v=", 3)) {
             log_verbose_level = atoi(argv[0] + 3);
@@ -369,6 +454,38 @@ main(int argc, char *argv[])
             if (argv[0][21] == '\0')
                 return print_help();
             jit_code_cache_size = atoi(argv[0] + 21);
+        }
+#endif
+#if WASM_ENABLE_JIT != 0
+        else if (!strncmp(argv[0], "--llvm-jit-size-level=", 22)) {
+            if (argv[0][22] == '\0')
+                return print_help();
+            llvm_jit_size_level = atoi(argv[0] + 22);
+            if (llvm_jit_size_level < 1) {
+                printf("LLVM JIT size level shouldn't be smaller than 1, "
+                       "setting it to 1\n");
+                llvm_jit_size_level = 1;
+            }
+            else if (llvm_jit_size_level > 3) {
+                printf("LLVM JIT size level shouldn't be greater than 3, "
+                       "setting it to 3\n");
+                llvm_jit_size_level = 3;
+            }
+        }
+        else if (!strncmp(argv[0], "--llvm-jit-opt-level=", 21)) {
+            if (argv[0][21] == '\0')
+                return print_help();
+            llvm_jit_opt_level = atoi(argv[0] + 21);
+            if (llvm_jit_opt_level < 1) {
+                printf("LLVM JIT opt level shouldn't be smaller than 1, "
+                       "setting it to 1\n");
+                llvm_jit_opt_level = 1;
+            }
+            else if (llvm_jit_opt_level > 3) {
+                printf("LLVM JIT opt level shouldn't be greater than 3, "
+                       "setting it to 3\n");
+                llvm_jit_opt_level = 3;
+            }
         }
 #endif
 #if WASM_ENABLE_LIBC_WASI != 0
@@ -456,7 +573,7 @@ main(int argc, char *argv[])
             }
         }
 #endif
-#if WASM_ENABLE_LIB_PTHREAD != 0
+#if WASM_ENABLE_LIB_PTHREAD != 0 || WASM_ENABLE_LIB_WASI_THREADS != 0
         else if (!strncmp(argv[0], "--max-threads=", 14)) {
             if (argv[0][14] == '\0')
                 return print_help();
@@ -496,6 +613,7 @@ main(int argc, char *argv[])
 
     memset(&init_args, 0, sizeof(RuntimeInitArgs));
 
+    init_args.running_mode = running_mode;
 #if WASM_ENABLE_GLOBAL_HEAP_POOL != 0
     init_args.mem_alloc_type = Alloc_With_Pool;
     init_args.mem_alloc_option.pool.heap_buf = global_heap_buf;
@@ -509,6 +627,11 @@ main(int argc, char *argv[])
 
 #if WASM_ENABLE_FAST_JIT != 0
     init_args.fast_jit_code_cache_size = jit_code_cache_size;
+#endif
+
+#if WASM_ENABLE_JIT != 0
+    init_args.llvm_jit_size_level = llvm_jit_size_level;
+    init_args.llvm_jit_opt_level = llvm_jit_opt_level;
 #endif
 
 #if WASM_ENABLE_DEBUG_INTERP != 0
@@ -603,14 +726,29 @@ main(int argc, char *argv[])
     }
 #endif
 
-    if (is_repl_mode)
-        app_instance_repl(wasm_module_inst);
-    else if (func_name)
-        app_instance_func(wasm_module_inst, func_name);
-    else
-        app_instance_main(wasm_module_inst);
-
     ret = 0;
+    if (is_repl_mode) {
+        app_instance_repl(wasm_module_inst);
+    }
+    else if (func_name) {
+        if (app_instance_func(wasm_module_inst, func_name)) {
+            /* got an exception */
+            ret = 1;
+        }
+    }
+    else {
+        if (app_instance_main(wasm_module_inst)) {
+            /* got an exception */
+            ret = 1;
+        }
+    }
+
+#if WASM_ENABLE_LIBC_WASI != 0
+    if (ret == 0) {
+        /* propagate wasi exit code. */
+        ret = wasm_runtime_get_wasi_exit_code(wasm_module_inst);
+    }
+#endif
 
 #if WASM_ENABLE_DEBUG_INTERP != 0
 fail4:
@@ -632,18 +770,11 @@ fail2:
 fail1:
 #if BH_HAS_DLFCN
     /* unload the native libraries */
-    for (native_handle_idx = 0; native_handle_idx < native_handle_count;
-         native_handle_idx++)
-        dlclose(native_handle_list[native_handle_idx]);
+    unregister_and_unload_native_libs(native_handle_count, native_handle_list);
 #endif
 
     /* destroy runtime environment */
     wasm_runtime_destroy();
 
-#if WASM_ENABLE_SPEC_TEST != 0
-    (void)ret;
-    return 0;
-#else
     return ret;
-#endif
 }
