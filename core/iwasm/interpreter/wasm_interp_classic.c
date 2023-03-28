@@ -33,6 +33,7 @@ typedef float64 CellType_F64;
 #define CHECK_MEMORY_OVERFLOW(bytes)                            \
     do {                                                        \
         uint64 offset1 = (uint64)offset + (uint64)addr;         \
+        linear_mem_size = get_linear_memory_size(memory, node); \
         if (offset1 + bytes <= (uint64)linear_mem_size)         \
             /* If offset1 is in valid range, maddr must also    \
                be in valid range, no need to check it again. */ \
@@ -41,15 +42,16 @@ typedef float64 CellType_F64;
             goto out_of_bounds;                                 \
     } while (0)
 
-#define CHECK_BULK_MEMORY_OVERFLOW(start, bytes, maddr) \
-    do {                                                \
-        uint64 offset1 = (uint32)(start);               \
-        if (offset1 + bytes <= (uint64)linear_mem_size) \
-            /* App heap space is not valid space for    \
-             bulk memory operation */                   \
-            maddr = memory->memory_data + offset1;      \
-        else                                            \
-            goto out_of_bounds;                         \
+#define CHECK_BULK_MEMORY_OVERFLOW(start, bytes, maddr)         \
+    do {                                                        \
+        uint64 offset1 = (uint32)(start);                       \
+        linear_mem_size = get_linear_memory_size(memory, node); \
+        if (offset1 + bytes <= (uint64)linear_mem_size)         \
+            /* App heap space is not valid space for            \
+             bulk memory operation */                           \
+            maddr = memory->memory_data + offset1;              \
+        else                                                    \
+            goto out_of_bounds;                                 \
     } while (0)
 #else
 #define CHECK_MEMORY_OVERFLOW(bytes)                    \
@@ -1125,6 +1127,12 @@ get_global_addr(uint8 *global_data, WASMGlobalInstance *global)
 #endif
 }
 
+static uint32
+get_linear_memory_size(WASMMemoryInstance *memory, void *node)
+{
+    return memory ? wasm_get_linear_memory_size(memory, node) : 0;
+}
+
 static void
 wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                                WASMExecEnv *exec_env,
@@ -1143,10 +1151,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #if !defined(OS_ENABLE_HW_BOUND_CHECK)              \
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 \
     || WASM_ENABLE_BULK_MEMORY != 0
-    uint32 num_bytes_per_page =
-        memory ? wasm_get_num_bytes_per_page(memory, node) : 0;
-    uint32 linear_mem_size =
-        memory ? wasm_get_linear_memory_size(memory, node) : 0;
+    uint32 linear_mem_size = get_linear_memory_size(memory, node);
 #endif
     WASMType **wasm_types = module->module->types;
     WASMGlobalInstance *globals = module->e->globals, *global;
@@ -2122,8 +2127,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #if !defined(OS_ENABLE_HW_BOUND_CHECK)              \
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 \
     || WASM_ENABLE_BULK_MEMORY != 0
-                    linear_mem_size =
-                        num_bytes_per_page * memory->cur_page_count;
+                    linear_mem_size = get_linear_memory_size(memory, node);
 #endif
                 }
 
@@ -3130,6 +3134,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 #ifndef OS_ENABLE_HW_BOUND_CHECK
                         CHECK_BULK_MEMORY_OVERFLOW(addr, bytes, maddr);
 #else
+                        linear_mem_size = get_linear_memory_size(memory, node);
                         if ((uint64)(uint32)addr + bytes
                             > (uint64)linear_mem_size)
                             goto out_of_bounds;
@@ -3169,6 +3174,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                         CHECK_BULK_MEMORY_OVERFLOW(src, len, msrc);
                         CHECK_BULK_MEMORY_OVERFLOW(dst, len, mdst);
 #else
+                        linear_mem_size = get_linear_memory_size(memory, node);
                         if ((uint64)(uint32)src + len > (uint64)linear_mem_size)
                             goto out_of_bounds;
                         msrc = memory->memory_data + (uint32)src;
@@ -3191,10 +3197,10 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
                         len = POP_I32();
                         fill_val = POP_I32();
                         dst = POP_I32();
-
 #ifndef OS_ENABLE_HW_BOUND_CHECK
                         CHECK_BULK_MEMORY_OVERFLOW(dst, len, mdst);
 #else
+                        linear_mem_size = get_linear_memory_size(memory, node);
                         if ((uint64)(uint32)dst + len > (uint64)linear_mem_size)
                             goto out_of_bounds;
                         mdst = memory->memory_data + (uint32)dst;
@@ -3865,7 +3871,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
     || WASM_CPU_SUPPORTS_UNALIGNED_ADDR_ACCESS == 0 \
     || WASM_ENABLE_BULK_MEMORY != 0
             if (memory)
-                linear_mem_size = num_bytes_per_page * memory->cur_page_count;
+                linear_mem_size = get_linear_memory_size(memory, node);
 #endif
             if (wasm_copy_exception(module, NULL))
                 goto got_exception;
