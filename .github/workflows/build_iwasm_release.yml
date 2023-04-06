@@ -48,10 +48,7 @@ jobs:
             ./core/deps/llvm/build/libexec
             ./core/deps/llvm/build/share
           key: ${{ inputs.llvm_cache_key }}
-
-      - name: Quit if cache miss
-        if: steps.retrieve_llvm_libs.outputs.cache-hit != 'true'
-        run: echo "::error::can not get prebuilt llvm libraries" && exit 1
+          fail-on-cache-miss: true
 
       - name: generate iwasm binary release
         run: |
@@ -73,6 +70,7 @@ jobs:
             -DWAMR_BUILD_BULK_MEMORY=1 \
             -DWAMR_BUILD_LIB_PTHREAD=1 \
             -DWAMR_BUILD_LIB_PTHREAD_SEMAPHORE=1 \
+            -DWAMR_BUILD_LIB_WASI_THREADS=1 \
             -DWAMR_BUILD_LIBC_BUILTIN=1 \
             -DWAMR_BUILD_LIBC_WASI=1 \
             -DWAMR_BUILD_REF_TYPES=1 \

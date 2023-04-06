@@ -115,6 +115,7 @@ jobs:
             "-DWAMR_BUILD_DEBUG_INTERP=1",
             "-DWAMR_BUILD_DUMP_CALL_STACK=1",
             "-DWAMR_BUILD_LIB_PTHREAD=1",
+            "-DWAMR_BUILD_LIB_WASI_THREADS=1",
             "-DWAMR_BUILD_LOAD_CUSTOM_SECTION=1",
             "-DWAMR_BUILD_MINI_LOADER=1",
             "-DWAMR_BUILD_MEMORY_PROFILING=1",
@@ -217,7 +218,7 @@ jobs:
         os: [macos-latest]
         wasi_sdk_release:
           [
-            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-19/wasi-sdk-19.0-macos.tar.gz",
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-20.0-macos.tar.gz",
           ]
         wabt_release:
           [
@@ -249,7 +250,7 @@ jobs:
         os: [macos-latest]
         wasi_sdk_release:
           [
-            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20%2Bthreads/wasi-sdk-20.0.threads-macos.tar.gz",
+            "https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-20/wasi-sdk-20.0-macos.tar.gz",
           ]
         wabt_release:
           [
@@ -264,7 +265,7 @@ jobs:
           cd /opt
           sudo wget ${{ matrix.wasi_sdk_release }}
           sudo tar -xzf wasi-sdk-*.tar.gz
-          sudo mv wasi-sdk-20.0+threads wasi-sdk
+          sudo mv wasi-sdk-20.0 wasi-sdk
 
       - name: download and install wabt
         run: |

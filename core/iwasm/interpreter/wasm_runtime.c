@@ -1014,9 +1014,9 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
 #endif
     WASMModuleInstanceCommon *module_inst_main = NULL;
 #ifdef OS_ENABLE_HW_BOUND_CHECK
-    WASMExecEnv *exec_env_tls = NULL;
+    WASMExecEnv *exec_env_tls = wasm_runtime_get_exec_env_tls();
 #endif
-    WASMExecEnv *exec_env = NULL;
+    WASMExecEnv *exec_env = NULL, *exec_env_created = NULL;
     bool ret = false;
 
 #if WASM_ENABLE_LIBC_WASI != 0
@@ -1060,7 +1060,6 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
     if (is_sub_inst) {
         bh_assert(exec_env_main);
 #ifdef OS_ENABLE_HW_BOUND_CHECK
-        exec_env_tls = wasm_runtime_get_exec_env_tls();
         bh_assert(exec_env_tls == exec_env_main);
         (void)exec_env_tls;
 #endif
@@ -1074,11 +1073,29 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
         exec_env->module_inst = (WASMModuleInstanceCommon *)module_inst;
     }
     else {
-        if (!(exec_env =
-                  wasm_exec_env_create((WASMModuleInstanceCommon *)module_inst,
-                                       module_inst->default_wasm_stack_size))) {
-            wasm_set_exception(module_inst, "allocate memory failed");
-            return false;
+        /* Try using the existing exec_env */
+#ifdef OS_ENABLE_HW_BOUND_CHECK
+        exec_env = exec_env_tls;
+#endif
+#if WASM_ENABLE_THREAD_MGR != 0
+        if (!exec_env)
+            exec_env = wasm_clusters_search_exec_env(
+                (WASMModuleInstanceCommon *)module_inst);
+#endif
+        if (!exec_env) {
+            if (!(exec_env = exec_env_created = wasm_exec_env_create(
+                      (WASMModuleInstanceCommon *)module_inst,
+                      module_inst->default_wasm_stack_size))) {
+                wasm_set_exception(module_inst, "allocate memory failed");
+                return false;
+            }
+        }
+        else {
+            /* Temporarily replace exec_env's module inst with current
+               module inst to ensure that the exec_env's module inst
+               is the correct one. */
+            module_inst_main = exec_env->module_inst;
+            exec_env->module_inst = (WASMModuleInstanceCommon *)module_inst;
         }
     }
 
@@ -1105,11 +1122,17 @@ execute_post_instantiate_functions(WASMModuleInstance *module_inst,
     ret = true;
 
 fail:
-    if (is_sub_inst)
+    if (is_sub_inst) {
         /* Restore the parent exec_env's module inst */
         exec_env_main->module_inst = module_inst_main;
-    else
-        wasm_exec_env_destroy(exec_env);
+    }
+    else {
+        if (module_inst_main)
+            /* Restore the existing exec_env's module inst */
+            exec_env->module_inst = module_inst_main;
+        if (exec_env_created)
+            wasm_exec_env_destroy(exec_env_created);
+    }
 
     return ret;
 }
@@ -1123,6 +1146,8 @@ execute_malloc_function(WASMModuleInstance *module_inst, WASMExecEnv *exec_env,
 #ifdef OS_ENABLE_HW_BOUND_CHECK
     WASMExecEnv *exec_env_tls = wasm_runtime_get_exec_env_tls();
 #endif
+    WASMExecEnv *exec_env_created = NULL;
+    WASMModuleInstanceCommon *module_inst_old = NULL;
     uint32 argv[2], argc;
     bool ret;
 
@@ -1151,19 +1176,43 @@ execute_malloc_function(WASMModuleInstance *module_inst, WASMExecEnv *exec_env,
                   == (WASMModuleInstanceCommon *)module_inst);
     }
     else {
-        if (!(exec_env =
-                  wasm_exec_env_create((WASMModuleInstanceCommon *)module_inst,
-                                       module_inst->default_wasm_stack_size))) {
-            wasm_set_exception(module_inst, "allocate memory failed");
-            return false;
+        /* Try using the existing exec_env */
+#ifdef OS_ENABLE_HW_BOUND_CHECK
+        exec_env = exec_env_tls;
+#endif
+#if WASM_ENABLE_THREAD_MGR != 0
+        if (!exec_env)
+            exec_env = wasm_clusters_search_exec_env(
+                (WASMModuleInstanceCommon *)module_inst);
+#endif
+        if (!exec_env) {
+            if (!(exec_env = exec_env_created = wasm_exec_env_create(
+                      (WASMModuleInstanceCommon *)module_inst,
+                      module_inst->default_wasm_stack_size))) {
+                wasm_set_exception(module_inst, "allocate memory failed");
+                return false;
+            }
+        }
+        else {
+            /* Temporarily replace exec_env's module inst with current
+               module inst to ensure that the exec_env's module inst
+               is the correct one. */
+            module_inst_old = exec_env->module_inst;
+            exec_env->module_inst = (WASMModuleInstanceCommon *)module_inst;
         }
     }
 
     ret = wasm_call_function(exec_env, malloc_func, argc, argv);
 
-    if (retain_func && ret) {
+    if (retain_func && ret)
         ret = wasm_call_function(exec_env, retain_func, 1, argv);
-    }
+
+    if (module_inst_old)
+        /* Restore the existing exec_env's module inst */
+        exec_env->module_inst = module_inst_old;
+
+    if (exec_env_created)
+        wasm_exec_env_destroy(exec_env_created);
 
     if (ret)
         *p_result = argv[0];
@@ -1177,7 +1226,10 @@ execute_free_function(WASMModuleInstance *module_inst, WASMExecEnv *exec_env,
 #ifdef OS_ENABLE_HW_BOUND_CHECK
     WASMExecEnv *exec_env_tls = wasm_runtime_get_exec_env_tls();
 #endif
+    WASMExecEnv *exec_env_created = NULL;
+    WASMModuleInstanceCommon *module_inst_old = NULL;
     uint32 argv[2];
+    bool ret;
 
     argv[0] = offset;
 
@@ -1191,15 +1243,42 @@ execute_free_function(WASMModuleInstance *module_inst, WASMExecEnv *exec_env,
                   == (WASMModuleInstanceCommon *)module_inst);
     }
     else {
-        if (!(exec_env =
-                  wasm_exec_env_create((WASMModuleInstanceCommon *)module_inst,
-                                       module_inst->default_wasm_stack_size))) {
-            wasm_set_exception(module_inst, "allocate memory failed");
-            return false;
+        /* Try using the existing exec_env */
+#ifdef OS_ENABLE_HW_BOUND_CHECK
+        exec_env = exec_env_tls;
+#endif
+#if WASM_ENABLE_THREAD_MGR != 0
+        if (!exec_env)
+            exec_env = wasm_clusters_search_exec_env(
+                (WASMModuleInstanceCommon *)module_inst);
+#endif
+        if (!exec_env) {
+            if (!(exec_env = exec_env_created = wasm_exec_env_create(
+                      (WASMModuleInstanceCommon *)module_inst,
+                      module_inst->default_wasm_stack_size))) {
+                wasm_set_exception(module_inst, "allocate memory failed");
+                return false;
+            }
+        }
+        else {
+            /* Temporarily replace exec_env's module inst with current
+               module inst to ensure that the exec_env's module inst
+               is the correct one. */
+            module_inst_old = exec_env->module_inst;
+            exec_env->module_inst = (WASMModuleInstanceCommon *)module_inst;
         }
     }
 
-    return wasm_call_function(exec_env, free_func, 1, argv);
+    ret = wasm_call_function(exec_env, free_func, 1, argv);
+
+    if (module_inst_old)
+        /* Restore the existing exec_env's module inst */
+        exec_env->module_inst = module_inst_old;
+
+    if (exec_env_created)
+        wasm_exec_env_destroy(exec_env_created);
+
+    return ret;
 }
 
 #if WASM_ENABLE_MULTI_MODULE != 0
