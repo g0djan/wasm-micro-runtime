@@ -1843,7 +1843,7 @@ init_llvm_jit_functions_stage1(WASMModule *module, char *error_buf,
     if (module->function_count == 0)
         return true;
 
-#if WASM_ENABLE_FAST_JIT != 0 && WASM_ENABLE_LLVM_JIT != 0
+#if WASM_ENABLE_FAST_JIT != 0 && WASM_ENABLE_LAZY_JIT != 0
     if (os_mutex_init(&module->tierup_wait_lock) != 0) {
         set_error_buf(error_buf, error_buf_size, "init jit tierup lock failed");
         return false;
@@ -1876,6 +1876,7 @@ init_llvm_jit_functions_stage1(WASMModule *module, char *error_buf,
     option.is_jit_mode = true;
     option.opt_level = llvm_jit_options.opt_level;
     option.size_level = llvm_jit_options.size_level;
+    option.segue_flags = llvm_jit_options.segue_flags;
 
 #if WASM_ENABLE_BULK_MEMORY != 0
     option.enable_bulk_memory = true;
@@ -6232,9 +6233,13 @@ re_scan:
             case WASM_OP_SELECT_T:
             {
                 uint8 vec_len, ref_type;
+#if WASM_ENABLE_FAST_INTERP != 0
+                uint8 *p_code_compiled_tmp = loader_ctx->p_code_compiled;
+#endif
 
                 read_leb_uint32(p, p_end, vec_len);
-                if (!vec_len) {
+                if (vec_len != 1) {
+                    /* typed select must have exactly one result */
                     set_error_buf(error_buf, error_buf_size,
                                   "invalid result arity");
                     goto fail;
@@ -6253,8 +6258,6 @@ re_scan:
 #if WASM_ENABLE_FAST_INTERP != 0
                 if (loader_ctx->p_code_compiled) {
                     uint8 opcode_tmp = WASM_OP_SELECT;
-                    uint8 *p_code_compiled_tmp =
-                        loader_ctx->p_code_compiled - 2;
 
                     if (ref_type == VALUE_TYPE_F64
                         || ref_type == VALUE_TYPE_I64)

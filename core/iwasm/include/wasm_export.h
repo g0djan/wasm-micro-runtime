@@ -167,6 +167,8 @@ typedef struct RuntimeInitArgs {
     /* LLVM JIT opt and size level */
     uint32_t llvm_jit_opt_level;
     uint32_t llvm_jit_size_level;
+    /* Segue optimization flags for LLVM JIT */
+    uint32_t segue_flags;
 } RuntimeInitArgs;
 
 #ifndef WASM_VALKIND_T_DEFINED
@@ -184,6 +186,7 @@ enum wasm_valkind_enum {
 
 #ifndef WASM_VAL_T_DEFINED
 #define WASM_VAL_T_DEFINED
+struct wasm_ref_t;
 
 typedef struct wasm_val_t {
     wasm_valkind_t kind;
@@ -195,6 +198,7 @@ typedef struct wasm_val_t {
         double f64;
         /* represent a foreign object, aka externref in .wat */
         uintptr_t foreign;
+        struct wasm_ref_t *ref;
     } of;
 } wasm_val_t;
 #endif
@@ -913,6 +917,25 @@ WASM_RUNTIME_API_EXTERN void *
 wasm_runtime_get_custom_data(wasm_module_inst_t module_inst);
 
 /**
+ * Set the memory bounds checks flag of a WASM module instance.
+ * 
+ * @param module_inst the WASM module instance
+ * @param enable the flag to enable/disable the memory bounds checks
+ */
+WASM_RUNTIME_API_EXTERN void
+wasm_runtime_set_bounds_checks(wasm_module_inst_t module_inst,
+                               bool enable);
+/**
+ * Check if the memory bounds checks flag is enabled for a WASM module instance.
+ * 
+ * @param module_inst the WASM module instance
+ *
+ * @return true if the memory bounds checks flag is enabled, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_bounds_checks_enabled(
+    wasm_module_inst_t module_inst);
+/**
  * Allocate memory from the heap of WASM module instance
  *
  * Note: wasm_runtime_module_malloc can call heap functions inside
@@ -1270,6 +1293,32 @@ wasm_externref_obj2ref(wasm_module_inst_t module_inst,
                        void *extern_obj, uint32_t *p_externref_idx);
 
 /**
+ * Delete external object registered by `wasm_externref_obj2ref`.
+ *
+ * @param module_inst the WASM module instance that the extern object
+ *        belongs to
+ * @param extern_obj the external object to be deleted
+ *
+ * @return true if success, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_externref_objdel(wasm_module_inst_t module_inst, void *extern_obj);
+
+/**
+ * Set cleanup callback to release external object.
+ *
+ * @param module_inst the WASM module instance that the extern object
+ *        belongs to
+ * @param extern_obj the external object to which to set the `extern_obj_cleanup` cleanup callback.
+ * @param extern_obj_cleanup a callback to release `extern_obj`
+ *
+ * @return true if success, false otherwise
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_externref_set_cleanup(wasm_module_inst_t module_inst, void *extern_obj,
+                           void (*extern_obj_cleanup)(void *));
+
+/**
  * Retrieve the external object from an internal externref index
  *
  * @param externref_idx the externref index to retrieve
@@ -1330,6 +1379,30 @@ wasm_runtime_dump_call_stack_to_buf(wasm_exec_env_t exec_env, char *buf,
                                     uint32_t len);
 
 /**
+ * Get the size required to store the LLVM PGO profile data
+ *
+ * @param module_inst the WASM module instance
+ *
+ * @return size required to store the contents, 0 means error
+ */
+WASM_RUNTIME_API_EXTERN uint32_t
+wasm_runtime_get_pgo_prof_data_size(wasm_module_inst_t module_inst);
+
+/**
+ * Dump the LLVM PGO profile data to buffer
+ *
+ * @param module_inst the WASM module instance
+ * @param buf buffer to store the dumped content
+ * @param len length of the buffer
+ *
+ * @return bytes dumped to the buffer, 0 means error and data in buf
+ *         may be invalid
+ */
+WASM_RUNTIME_API_EXTERN uint32_t
+wasm_runtime_dump_pgo_prof_data_to_buf(wasm_module_inst_t module_inst,
+                                       char *buf, uint32_t len);
+
+/**
  * Get a custom section by name
  *
  * @param module_comm the module to find
@@ -1351,20 +1424,21 @@ WASM_RUNTIME_API_EXTERN void
 wasm_runtime_get_version(uint32_t *major, uint32_t *minor, uint32_t *patch);
 
 /**
- * Check whether an import func `(import <module_name> <func_name> (func ...))` is linked or not
- * with runtime registered natvie functions
+ * Check whether an import func `(import <module_name> <func_name> (func ...))`
+ * is linked or not with runtime registered natvie functions
  */
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_is_import_func_linked(const char *module_name,
                                    const char *func_name);
 
 /**
- * Check whether an import global `(import <module_name> <global_name> (global ...))` is linked or not
- * with runtime registered natvie globals
+ * Check whether an import global `(import <module_name> <global_name> (global ...))`
+ * is linked or not with runtime registered natvie globals
  */
 WASM_RUNTIME_API_EXTERN bool
 wasm_runtime_is_import_global_linked(const char *module_name,
                                      const char *global_name);
+
 /* clang-format on */
 
 #ifdef __cplusplus
