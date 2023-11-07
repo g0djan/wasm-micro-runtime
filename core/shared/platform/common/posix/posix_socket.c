@@ -147,16 +147,12 @@ os_socket_bind(bh_socket_t socket, const char *host, int *port)
     ling.l_onoff = 1;
     ling.l_linger = 0;
 
-#ifdef __ORBIS__
-    ret = -1;
-#else
     if (!textual_addr_to_sockaddr(host, *port, (struct sockaddr *)&addr,
                                   &socklen)) {
         goto fail;
     }
 
     ret = fcntl(socket, F_SETFD, FD_CLOEXEC);
-#endif
     if (ret < 0) {
         goto fail;
     }
