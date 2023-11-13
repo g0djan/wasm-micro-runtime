@@ -134,12 +134,10 @@ https://gcc.gnu.org/bugzilla/show_bug.cgi?id=58016 */
 #define CONFIG_HAS_STD_ATOMIC 0
 #endif /* end of !defined(BH_PLATFORM_LINUX_SGX) */
 
-#if !defined(CONFIG_HAS_D_INO)
-#if !defined(__NuttX__)
+#if !defined(__NuttX__) && !defined(__ORBIS__)
 #define CONFIG_HAS_D_INO 1
 #else
 #define CONFIG_HAS_D_INO 0
-#endif
 #endif
 
 #endif
