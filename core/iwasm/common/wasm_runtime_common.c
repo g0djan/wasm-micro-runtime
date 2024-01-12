@@ -2856,7 +2856,7 @@ wasm_runtime_set_wasi_ns_lookup_pool(wasm_module_t module,
 }
 
 bool
-wasm_runtime_set_capped_module_max_memory(wasm_module_t module, uint32 max_memory_cap)
+wasm_runtime_set_capped_module_max_memory(wasm_module_t module, uint32_t max_memory_cap)
 {
 
     #if WASM_ENABLE_INTERP != 0 || WASM_ENABLE_JIT != 0
