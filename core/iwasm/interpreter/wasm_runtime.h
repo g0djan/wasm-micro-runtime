@@ -424,6 +424,8 @@ wasm_load_from_sections(WASMSection *section_list, char *error_buf,
 void
 wasm_unload(WASMModule *module);
 
+bool wasm_runtime_cap_module_max_memory(WASMModule *module, uint32_t capped_max_memory);
+
 WASMModuleInstance *
 wasm_instantiate(WASMModule *module, WASMModuleInstance *parent,
                  WASMExecEnv *exec_env_main, uint32 stack_size,

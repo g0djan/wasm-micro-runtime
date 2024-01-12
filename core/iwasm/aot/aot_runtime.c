@@ -1099,6 +1099,18 @@ check_linked_symbol(AOTModule *module, char *error_buf, uint32 error_buf_size)
     return true;
 }
 
+bool aot_runtime_cap_module_max_memory(AOTModule *module, uint32_t capped_max_memory) {
+    if (module->import_memories->mem_init_page_count > capped_max_memory) {
+        return false;
+    }
+
+    if (module->import_memories->mem_max_page_count <= capped_max_memory) {
+        return false;
+    }
+    module->import_memories->mem_max_page_count = capped_max_memory;
+    return true;
+}
+
 AOTModuleInstance *
 aot_instantiate(AOTModule *module, AOTModuleInstance *parent,
                 WASMExecEnv *exec_env_main, uint32 stack_size, uint32 heap_size,

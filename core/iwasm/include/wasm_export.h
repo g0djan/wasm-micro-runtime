@@ -500,6 +500,13 @@ WASM_RUNTIME_API_EXTERN void
 wasm_runtime_set_wasi_ns_lookup_pool(wasm_module_t module, const char *ns_lookup_pool[],
                                      uint32_t ns_lookup_pool_size);
 
+
+
+/* Set module parameters.
+*/
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_set_capped_module_max_memory(wasm_module_t module, uint32 max_memory_cap);
+
 /**
  * Instantiate a WASM module.
  *

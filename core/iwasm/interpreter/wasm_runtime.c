@@ -1566,6 +1566,18 @@ wasm_set_running_mode(WASMModuleInstance *module_inst, RunningMode running_mode)
     return set_running_mode(module_inst, running_mode, false);
 }
 
+bool wasm_runtime_cap_module_max_memory(WASMModule *module, uint32_t capped_max_memory) {
+    if (module->import_memories->u.memory.init_page_count > capped_max_memory) {
+        return false;
+    }
+
+    if (module->import_memories->u.memory.max_page_count <= capped_max_memory) {
+        return false;
+    }
+    module->import_memories->u.memory.max_page_count = capped_max_memory;
+    return true;
+}
+
 /**
  * Instantiate module
  */

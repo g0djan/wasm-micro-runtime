@@ -2855,6 +2855,20 @@ wasm_runtime_set_wasi_ns_lookup_pool(wasm_module_t module,
     }
 }
 
+bool
+wasm_runtime_set_capped_module_max_memory(wasm_module_t module, uint32 max_memory_cap)
+{
+
+    #if WASM_ENABLE_INTERP != 0 || WASM_ENABLE_JIT != 0
+        if (module->module_type == Wasm_Module_Bytecode)
+            return wasm_runtime_cap_module_max_memory(((WASMModule *)module), max_memory_cap);
+    #endif
+    #if WASM_ENABLE_AOT != 0
+        if (module->module_type == Wasm_Module_AoT)
+            return aot_runtime_cap_module_max_memory(((AOTModule *)module), max_memory_cap);
+    #endif
+}
+
 #if WASM_ENABLE_UVWASI == 0
 static bool
 copy_string_array(const char *array[], uint32 array_size, char **buf_ptr,

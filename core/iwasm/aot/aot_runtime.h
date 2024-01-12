@@ -380,6 +380,8 @@ aot_load_from_sections(AOTSection *section_list, char *error_buf,
 void
 aot_unload(AOTModule *module);
 
+bool aot_runtime_cap_module_max_memory(AOTModule *module, uint32_t capped_max_memory);
+
 /**
  * Instantiate a AOT module.
  *
