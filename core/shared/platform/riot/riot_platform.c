@@ -50,7 +50,7 @@ os_dumps_proc_mem_info(char *out, unsigned int size)
 }
 
 void *
-os_mmap(void *hint, size_t size, int prot, int flags)
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
     if (size > ((unsigned)~0))
         return NULL;
@@ -79,3 +79,7 @@ os_dcache_flush(void)
     irq_unlock(key);
 #endif
 }
+
+void
+os_icache_flush(void *start, size_t len)
+{}

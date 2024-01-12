@@ -315,6 +315,11 @@
 #define BH_ENABLE_GC_VERIFY 0
 #endif
 
+/* Heap corruption check, enabled by default */
+#ifndef BH_ENABLE_GC_CORRUPTION_CHECK
+#define BH_ENABLE_GC_CORRUPTION_CHECK 1
+#endif
+
 /* Enable global heap pool if heap verification is enabled */
 #if BH_ENABLE_GC_VERIFY != 0
 #define WASM_ENABLE_GLOBAL_HEAP_POOL 1
@@ -472,12 +477,29 @@
 /* Some chip cannot support external ram with rwx attr at the same time,
    it has to map it into 2 spaces of idbus and dbus, code in dbus can be
    read/written and read/executed in ibus. so there are 2 steps to execute
-   the code, first, copy&do relocaiton in dbus space, and second execute
+   the code, first, copy & do relocation in dbus space, and second execute
    it in ibus space, since in the 2 spaces the contents are the same,
    so we call it bus mirror.
  */
 #ifndef WASM_MEM_DUAL_BUS_MIRROR
 #define WASM_MEM_DUAL_BUS_MIRROR 0
+#endif
+
+/* The max number of module instance contexts. */
+#ifndef WASM_MAX_INSTANCE_CONTEXTS
+#define WASM_MAX_INSTANCE_CONTEXTS 8
+#endif
+
+/* linux perf support */
+#ifndef WASM_ENABLE_LINUX_PERF
+#define WASM_ENABLE_LINUX_PERF 0
+#endif
+
+/* Support registering quick AOT/JIT function entries of some func types
+   to speedup the calling process of invoking the AOT/JIT functions of
+   these types from the host embedder */
+#ifndef WASM_ENABLE_QUICK_AOT_ENTRY
+#define WASM_ENABLE_QUICK_AOT_ENTRY 1
 #endif
 
 #endif /* end of _CONFIG_H_ */

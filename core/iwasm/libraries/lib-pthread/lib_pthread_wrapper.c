@@ -558,10 +558,8 @@ pthread_create_wrapper(wasm_exec_env_t exec_env,
     ThreadRoutineArgs *routine_args = NULL;
     uint32 thread_handle;
     uint32 stack_size = 8192;
+    uint32 aux_stack_start = 0, aux_stack_size;
     int32 ret = -1;
-#if WASM_ENABLE_LIBC_WASI != 0
-    WASIContext *wasi_ctx;
-#endif
 
     bh_assert(module);
     bh_assert(module_inst);
@@ -588,11 +586,7 @@ pthread_create_wrapper(wasm_exec_env_t exec_env,
     wasm_runtime_set_custom_data_internal(
         new_module_inst, wasm_runtime_get_custom_data(module_inst));
 
-#if WASM_ENABLE_LIBC_WASI != 0
-    wasi_ctx = get_wasi_ctx(module_inst);
-    if (wasi_ctx)
-        wasm_runtime_set_wasi_ctx(new_module_inst, wasi_ctx);
-#endif
+    wasm_native_inherit_contexts(new_module_inst, module_inst);
 
     if (!(wasm_cluster_dup_c_api_imports(new_module_inst, module_inst)))
         goto fail;
@@ -616,10 +610,22 @@ pthread_create_wrapper(wasm_exec_env_t exec_env,
     routine_args->info_node = info_node;
     routine_args->module_inst = new_module_inst;
 
+    /* Allocate aux stack previously since exec_env->wait_lock is acquired
+       below, and if the stack is allocated in wasm_cluster_create_thread,
+       runtime may call the exported malloc function to allocate the stack,
+       which acquires exec_env->wait again in wasm_exec_env_set_thread_info,
+       and recursive lock (or hang) occurs */
+    if (!wasm_cluster_allocate_aux_stack(exec_env, &aux_stack_start,
+                                         &aux_stack_size)) {
+        LOG_ERROR("thread manager error: "
+                  "failed to allocate aux stack space for new thread");
+        goto fail;
+    }
+
     os_mutex_lock(&exec_env->wait_lock);
-    ret =
-        wasm_cluster_create_thread(exec_env, new_module_inst, true,
-                                   pthread_start_routine, (void *)routine_args);
+    ret = wasm_cluster_create_thread(
+        exec_env, new_module_inst, true, aux_stack_start, aux_stack_size,
+        pthread_start_routine, (void *)routine_args);
     if (ret != 0) {
         os_mutex_unlock(&exec_env->wait_lock);
         goto fail;
@@ -643,6 +649,8 @@ fail:
         wasm_runtime_free(info_node);
     if (routine_args)
         wasm_runtime_free(routine_args);
+    if (aux_stack_start)
+        wasm_cluster_free_aux_stack(exec_env, aux_stack_start);
     return ret;
 }
 

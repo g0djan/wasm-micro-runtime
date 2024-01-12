@@ -82,6 +82,13 @@ uint8 *
 os_thread_get_stack_boundary(void);
 
 /**
+ * Set whether the MAP_JIT region write protection is enabled for this thread.
+ * Pass true to make the region executable, false to make it writable.
+ */
+void
+os_thread_jit_write_protect_np(bool enabled);
+
+/**
  ************** mutext APIs ***********
  *  vmcore:  Not required until pthread is supported by runtime
  *  app-mgr: Must be implemented
@@ -123,7 +130,7 @@ enum {
 };
 
 void *
-os_mmap(void *hint, size_t size, int prot, int flags);
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file);
 void
 os_munmap(void *addr, size_t size);
 int
@@ -142,6 +149,12 @@ os_get_dbus_mirror(void *ibus);
  */
 void
 os_dcache_flush(void);
+
+/**
+ * Flush instruction cache.
+ */
+void
+os_icache_flush(void *start, size_t len);
 
 #ifdef __cplusplus
 }

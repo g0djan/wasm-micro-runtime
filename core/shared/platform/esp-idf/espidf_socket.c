@@ -5,6 +5,7 @@
 
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
+#include "libc_errno.h"
 
 #include <arpa/inet.h>
 
@@ -30,7 +31,7 @@ sockaddr_to_bh_sockaddr(const struct sockaddr *sockaddr, socklen_t socklen,
             assert(socklen >= sizeof(struct sockaddr_in));
 
             bh_sockaddr->port = ntohs(addr->sin_port);
-            bh_sockaddr->addr_bufer.ipv4 = ntohl(addr->sin_addr.s_addr);
+            bh_sockaddr->addr_buffer.ipv4 = ntohl(addr->sin_addr.s_addr);
             bh_sockaddr->is_ipv4 = true;
             return BHT_OK;
         }
@@ -167,11 +168,13 @@ os_socket_close(bh_socket_t socket)
     return BHT_OK;
 }
 
-int
+__wasi_errno_t
 os_socket_shutdown(bh_socket_t socket)
 {
-    shutdown(socket, O_RDWR);
-    return BHT_OK;
+    if (shutdown(socket, O_RDWR) != 0) {
+        return convert_errno(errno);
+    }
+    return __WASI_ESUCCESS;
 }
 
 int

@@ -130,6 +130,10 @@ typedef struct WASMType {
        kind of function type from fast jit jitted code */
     void *call_to_llvm_jit_from_fast_jit;
 #endif
+#if WASM_ENABLE_QUICK_AOT_ENTRY != 0
+    /* Quick AOT/JIT entry of this func type */
+    void *quick_aot_entry;
+#endif
     /* types of params and results */
     uint8 types[1];
 } WASMType;
@@ -311,7 +315,6 @@ typedef struct WASMTableSeg {
     uint32 mode;
     /* funcref or externref, elemkind will be considered as funcref */
     uint32 elem_type;
-    bool is_dropped;
     /* optional, only for active */
     uint32 table_index;
     InitializerExpression base_offset;
@@ -350,7 +353,7 @@ typedef struct WASIArguments {
     uint32 ns_lookup_count;
     char **argv;
     uint32 argc;
-    int stdio[3];
+    os_raw_file_handle stdio[3];
 } WASIArguments;
 #endif
 

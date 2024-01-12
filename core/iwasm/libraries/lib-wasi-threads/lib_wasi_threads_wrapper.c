@@ -80,9 +80,6 @@ thread_spawn_wrapper(wasm_exec_env_t exec_env, uint32 start_arg)
     int32 thread_id;
     uint32 stack_size = 8192;
     int32 ret = -1;
-#if WASM_ENABLE_LIBC_WASI != 0
-    WASIContext *wasi_ctx;
-#endif
 
     bh_assert(module);
     bh_assert(module_inst);
@@ -99,11 +96,7 @@ thread_spawn_wrapper(wasm_exec_env_t exec_env, uint32 start_arg)
     if (!(wasm_cluster_dup_c_api_imports(new_module_inst, module_inst)))
         goto thread_preparation_fail;
 
-#if WASM_ENABLE_LIBC_WASI != 0
-    wasi_ctx = wasm_runtime_get_wasi_ctx(module_inst);
-    if (wasi_ctx)
-        wasm_runtime_set_wasi_ctx(new_module_inst, wasi_ctx);
-#endif
+    wasm_native_inherit_contexts(new_module_inst, module_inst);
 
     start_func = wasm_runtime_lookup_function(new_module_inst,
                                               THREAD_START_FUNCTION, NULL);
@@ -126,7 +119,7 @@ thread_spawn_wrapper(wasm_exec_env_t exec_env, uint32 start_arg)
     thread_start_arg->arg = start_arg;
     thread_start_arg->start_func = start_func;
 
-    ret = wasm_cluster_create_thread(exec_env, new_module_inst, false,
+    ret = wasm_cluster_create_thread(exec_env, new_module_inst, false, 0, 0,
                                      thread_start, thread_start_arg);
     if (ret != 0) {
         LOG_ERROR("Failed to spawn a new thread");

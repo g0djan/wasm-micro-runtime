@@ -1,7 +1,7 @@
 
 # Build WAMR vmcore
 
-WAMR vmcore is a set of runtime libraries for loading and running Wasm modules. This document introduces how to build the WAMR vmcore.  
+WAMR vmcore is a set of runtime libraries for loading and running Wasm modules. This document introduces how to build the WAMR vmcore.
 
 References:
 - [how to build iwasm](../product-mini/README.md): building different target platforms such as Linux, Windows, Mac etc
@@ -27,8 +27,8 @@ The script `runtime_lib.cmake` defines a number of variables for configuring the
 - **WAMR_BUILD_TARGET**: set the target CPU architecture. Current supported targets are:  X86_64, X86_32, AARCH64, ARM, THUMB, XTENSA, ARC, RISCV32, RISCV64 and MIPS.
   - For ARM and THUMB, the format is \<arch>\[\<sub-arch>]\[_VFP], where \<sub-arch> is the ARM sub-architecture and the "_VFP" suffix means using VFP coprocessor registers s0-s15 (d0-d7) for passing arguments or returning results in standard procedure-call. Both \<sub-arch> and "_VFP" are optional, e.g. ARMV7, ARMV7_VFP, THUMBV7, THUMBV7_VFP and so on.
   - For AARCH64, the format is\<arch>[\<sub-arch>], VFP is enabled by default. \<sub-arch> is optional, e.g. AARCH64, AARCH64V8, AARCH64V8.1 and so on.
-  - For RISCV64, the format is \<arch\>[_abi], where "_abi" is optional, currently the supported formats are RISCV64, RISCV64_LP64D and RISCV64_LP64: RISCV64 and RISCV64_LP64D are identical, using [LP64D](https://github.com/riscv/riscv-elf-psabi-doc/blob/master/riscv-elf.md#-named-abis) as abi (LP64 with hardware floating-point calling convention for FLEN=64). And RISCV64_LP64 uses [LP64](https://github.com/riscv/riscv-elf-psabi-doc/blob/master/riscv-elf.md#-named-abis) as abi (Integer calling-convention only, and hardware floating-point calling convention is not used).
-  - For RISCV32, the format is \<arch\>[_abi], where "_abi" is optional, currently the supported formats are RISCV32, RISCV32_ILP32D and RISCV32_ILP32: RISCV32 and RISCV32_ILP32D are identical, using [ILP32D](https://github.com/riscv/riscv-elf-psabi-doc/blob/master/riscv-elf.md#-named-abis) as abi (ILP32 with hardware floating-point calling convention for FLEN=64). And RISCV32_ILP32 uses [ILP32](https://github.com/riscv/riscv-elf-psabi-doc/blob/master/riscv-elf.md#-named-abis) as abi (Integer calling-convention only, and hardware floating-point calling convention is not used).
+  - For RISCV64, the format is \<arch\>[_abi], where "_abi" is optional, currently the supported formats are RISCV64, RISCV64_LP64D and RISCV64_LP64: RISCV64 and RISCV64_LP64D are identical, using [LP64D](https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc#named-abis) as abi (LP64 with hardware floating-point calling convention for FLEN=64). And RISCV64_LP64 uses [LP64](https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc#named-abis) as abi (Integer calling-convention only, and hardware floating-point calling convention is not used).
+  - For RISCV32, the format is \<arch\>[_abi], where "_abi" is optional, currently the supported formats are RISCV32, RISCV32_ILP32D and RISCV32_ILP32: RISCV32 and RISCV32_ILP32D are identical, using [ILP32D](https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc#named-abis) as abi (ILP32 with hardware floating-point calling convention for FLEN=64). And RISCV32_ILP32 uses [ILP32](https://github.com/riscv-non-isa/riscv-elf-psabi-doc/blob/master/riscv-cc.adoc#named-abis) as abi (Integer calling-convention only, and hardware floating-point calling convention is not used).
 
 ```bash
 cmake -DWAMR_BUILD_PLATFORM=linux -DWAMR_BUILD_TARGET=ARM
@@ -109,6 +109,10 @@ cmake -DWAMR_BUILD_PLATFORM=linux -DWAMR_BUILD_TARGET=ARM
 - **WAMR_DISABLE_STACK_HW_BOUND_CHECK**=1/0, default to enable if not set and supported by platform, same as `WAMR_DISABLE_HW_BOUND_CHECK`.
 > Note: When boundary check with hardware trap is disabled, or `WAMR_DISABLE_HW_BOUND_CHECK` is set to 1, the native stack boundary check with hardware trap will be disabled too, no matter what value is set to `WAMR_DISABLE_STACK_HW_BOUND_CHECK`. And when boundary check with hardware trap is enabled, the status of this feature is set according to the value of `WAMR_DISABLE_STACK_HW_BOUND_CHECK`.
 
+#### **Disable async wakeup of blocking operation**
+- **WAMR_DISABLE_WAKEUP_BLOCKING_OP**=1/0, default to enable if supported by the platform
+> Note: The feature helps async termination of blocking threads. If you disable it, the runtime can wait for termination of blocking threads possibly forever.
+
 #### **Enable tail call feature**
 - **WAMR_BUILD_TAIL_CALL**=1/0, default to disable if not set
 
@@ -126,7 +130,7 @@ cmake -DWAMR_BUILD_PLATFORM=linux -DWAMR_BUILD_TARGET=ARM
 > Note: if it is enabled, the call stack will be dumped when exception occurs.
 
 > - For interpreter mode, the function names are firstly extracted from *custom name section*, if this section doesn't exist or the feature is not enabled, then the name will be extracted from the import/export sections
-> - For AOT/JIT mode, the function names are extracted from import/export section, please export as many functions as possible (for `wasi-sdk` you can use `-Wl,--export-all`) when compiling wasm module, and add `--enable-dump-call-stack` option to wamrc during compiling AOT module.
+> - For AOT/JIT mode, the function names are extracted from import/export section, please export as many functions as possible (for `wasi-sdk` you can use `-Wl,--export-all`) when compiling wasm module, and add `--enable-dump-call-stack --emit-custom-sections=name` option to wamrc during compiling AOT module.
 
 #### **Enable memory profiling (Experiment)**
 - **WAMR_BUILD_MEMORY_PROFILING**=1/0, default to disable if not set
@@ -197,7 +201,7 @@ Currently we only profile the memory consumption of module, module_instance and 
 
 > Note: If `WAMR_BUILD_CUSTOM_NAME_SECTION` is enabled, then the `custom name section` will be treated as a special section and consumed by the runtime, not available to the embedder.
 
-> For AoT file, must use `--emit-custom-sections` to specify which sections need to be emitted into AoT file, otherwise all custom sections (except custom name section) will be ignored.
+> For AoT file, must use `--emit-custom-sections` to specify which sections need to be emitted into AoT file, otherwise all custom sections will be ignored.
 
 ### **Stack guard size**
 - **WAMR_BUILD_STACK_GUARD_SIZE**=n, default to N/A if not set.

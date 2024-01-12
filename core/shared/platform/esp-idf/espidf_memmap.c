@@ -19,7 +19,7 @@ static portMUX_TYPE s_spinlock = portMUX_INITIALIZER_UNLOCKED;
 #endif
 
 void *
-os_mmap(void *hint, size_t size, int prot, int flags)
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
     if (prot & MMAP_PROT_EXEC) {
 #if (WASM_MEM_DUAL_BUS_MIRROR != 0)
@@ -99,6 +99,10 @@ void
     portEXIT_CRITICAL(&s_spinlock);
 #endif
 }
+
+void
+os_icache_flush(void *start, size_t len)
+{}
 
 #if (WASM_MEM_DUAL_BUS_MIRROR != 0)
 void *

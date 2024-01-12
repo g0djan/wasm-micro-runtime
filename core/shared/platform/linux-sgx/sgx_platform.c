@@ -119,13 +119,32 @@ strcpy(char *dest, const char *src)
     return dest;
 }
 
+#if WASM_ENABLE_LIBC_WASI == 0
+bool
+os_is_handle_valid(os_file_handle *handle)
+{
+    assert(handle != NULL);
+
+    return *handle > -1;
+}
+#else
+/* implemented in posix_file.c */
+#endif
+
 void *
-os_mmap(void *hint, size_t size, int prot, int flags)
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
     int mprot = 0;
     uint64 aligned_size, page_size;
     void *ret = NULL;
     sgx_status_t st = 0;
+
+    if (os_is_handle_valid(&file)) {
+        os_printf("os_mmap(size=%u, prot=0x%x, file=%x) failed: file is not "
+                  "supported.\n",
+                  size, prot, file);
+        return NULL;
+    }
 
     page_size = getpagesize();
     aligned_size = (size + page_size - 1) & ~(page_size - 1);
@@ -194,4 +213,8 @@ os_mprotect(void *addr, size_t size, int prot)
 
 void
 os_dcache_flush(void)
+{}
+
+void
+os_icache_flush(void *start, size_t len)
 {}

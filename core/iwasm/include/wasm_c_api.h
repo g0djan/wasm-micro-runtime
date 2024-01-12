@@ -21,6 +21,15 @@
 #endif
 #endif
 
+#if defined(__GNUC__) || defined(__clang__)
+#define DEPRECATED __attribute__((deprecated))
+#elif defined(_MSC_VER)
+#define DEPRECATED __declspec(deprecated)
+#else
+#pragma message("WARNING: You need to implement DEPRECATED for this compiler")
+#define DEPRECATED
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -136,31 +145,6 @@ static inline void wasm_name_new_from_string_nt(
 
 WASM_DECLARE_OWN(config)
 
-WASM_API_EXTERN own wasm_config_t* wasm_config_new(void);
-
-// Embedders may provide custom functions for manipulating configs.
-
-
-// Engine
-
-WASM_DECLARE_OWN(engine)
-
-/**
- * Create a new engine
- *
- * Note: for the engine new/delete operations, including this,
- * wasm_engine_new_with_config, wasm_engine_new_with_args, and
- * wasm_engine_delete, if the platform has mutex initializer,
- * then they are thread-safe: we use a global lock to lock the
- * operations of the engine. Otherwise they are not thread-safe:
- * when there are engine new/delete operations happening
- * simultaneously in multiple threads, developer must create
- * the lock by himself, and add the lock when calling these
- * functions.
- */
-WASM_API_EXTERN own wasm_engine_t* wasm_engine_new(void);
-WASM_API_EXTERN own wasm_engine_t* wasm_engine_new_with_config(own wasm_config_t*);
-
 #ifndef MEM_ALLOC_OPTION_DEFINED
 #define MEM_ALLOC_OPTION_DEFINED
 /* same definition from wasm_export.h */
@@ -191,9 +175,63 @@ typedef union MemAllocOption {
         void *user_data;
     } allocator;
 } MemAllocOption;
-#endif
+#endif /* MEM_ALLOC_OPTION_DEFINED */
 
-WASM_API_EXTERN own wasm_engine_t *
+/* Runtime configration */
+struct wasm_config_t {
+    mem_alloc_type_t mem_alloc_type;
+    MemAllocOption mem_alloc_option;
+    uint32_t segue_flags;
+    bool enable_linux_perf;
+    /*TODO: wasi args*/
+};
+
+/*
+ * by default:
+ * - mem_alloc_type is Alloc_With_System_Allocator
+ * - mem_alloc_option is all 0
+ * - enable_linux_perf is false
+ */
+WASM_API_EXTERN own wasm_config_t* wasm_config_new(void);
+
+// Embedders may provide custom functions for manipulating configs.
+WASM_API_EXTERN own wasm_config_t*
+wasm_config_set_mem_alloc_opt(wasm_config_t *, mem_alloc_type_t, MemAllocOption *);
+
+WASM_API_EXTERN own wasm_config_t*
+wasm_config_set_linux_perf_opt(wasm_config_t *, bool);
+
+/**
+ * Enable using GS register as the base address of linear memory in linux x86_64,
+ * which may speedup the linear memory access for LLVM AOT/JIT:
+ *   bit0 to bit4 denotes i32.load, i64.load, f32.load, f64.load, v128.load
+ *   bit8 to bit12 denotes i32.store, i64.store, f32.store, f64.store, v128.store
+ * For example, 0x01 enables i32.load, 0x0100 enables i32.store.
+ * To enable all load/store operations, use 0x1F1F
+ */
+WASM_API_EXTERN wasm_config_t*
+wasm_config_set_segue_flags(wasm_config_t *config, uint32_t segue_flags);
+
+// Engine
+
+WASM_DECLARE_OWN(engine)
+
+/**
+ * Create a new engine
+ *
+ * Note: for the engine new/delete operations, including this,
+ * wasm_engine_new_with_config, wasm_engine_new_with_args, and
+ * wasm_engine_delete, if the platform has mutex initializer,
+ * then they are thread-safe: we use a global lock to lock the
+ * operations of the engine. Otherwise they are not thread-safe:
+ * when there are engine new/delete operations happening
+ * simultaneously in multiple threads, developer must create
+ * the lock by himself, and add the lock when calling these
+ * functions.
+ */
+WASM_API_EXTERN own wasm_engine_t* wasm_engine_new(void);
+WASM_API_EXTERN own wasm_engine_t* wasm_engine_new_with_config(wasm_config_t*);
+DEPRECATED WASM_API_EXTERN own wasm_engine_t *
 wasm_engine_new_with_args(mem_alloc_type_t type, const MemAllocOption *opts);
 
 // Store
@@ -379,6 +417,7 @@ struct wasm_ref_t;
 
 typedef struct wasm_val_t {
   wasm_valkind_t kind;
+  uint8_t __paddings[7];
   union {
     int32_t i32;
     int64_t i64;

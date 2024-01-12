@@ -51,6 +51,13 @@ struct WASMCluster {
 #if WASM_ENABLE_DEBUG_INTERP != 0
     WASMDebugInstance *debug_inst;
 #endif
+
+#if WASM_ENABLE_DUMP_CALL_STACK != 0
+    /* When an exception occurs in a thread, the stack frames of that thread are
+     * saved into the cluster
+     */
+    Vector exception_frames;
+#endif
 };
 
 void
@@ -81,7 +88,9 @@ wasm_cluster_dup_c_api_imports(WASMModuleInstanceCommon *module_inst_dst,
 
 int32
 wasm_cluster_create_thread(WASMExecEnv *exec_env,
-                           wasm_module_inst_t module_inst, bool alloc_aux_stack,
+                           wasm_module_inst_t module_inst,
+                           bool is_aux_stack_allocated, uint32 aux_stack_start,
+                           uint32 aux_stack_size,
                            void *(*thread_routine)(void *), void *arg);
 
 int32
@@ -139,7 +148,7 @@ WASMExecEnv *
 wasm_clusters_search_exec_env(WASMModuleInstanceCommon *module_inst);
 
 void
-wasm_cluster_spread_exception(WASMExecEnv *exec_env, bool clear);
+wasm_cluster_set_exception(WASMExecEnv *exec_env, const char *exception);
 
 WASMExecEnv *
 wasm_cluster_spawn_exec_env(WASMExecEnv *exec_env);
@@ -150,6 +159,10 @@ wasm_cluster_destroy_spawned_exec_env(WASMExecEnv *exec_env);
 void
 wasm_cluster_spread_custom_data(WASMModuleInstanceCommon *module_inst,
                                 void *custom_data);
+
+void
+wasm_cluster_set_context(WASMModuleInstanceCommon *module_inst, void *key,
+                         void *ctx);
 
 bool
 wasm_cluster_is_thread_terminated(WASMExecEnv *exec_env);
@@ -210,6 +223,19 @@ void
 wasm_cluster_set_debug_inst(WASMCluster *cluster, WASMDebugInstance *inst);
 
 #endif /* end of WASM_ENABLE_DEBUG_INTERP != 0 */
+
+void
+wasm_cluster_traverse_lock(WASMExecEnv *exec_env);
+
+void
+wasm_cluster_traverse_unlock(WASMExecEnv *exec_env);
+
+bool
+wasm_cluster_allocate_aux_stack(WASMExecEnv *exec_env, uint32 *p_start,
+                                uint32 *p_size);
+
+bool
+wasm_cluster_free_aux_stack(WASMExecEnv *exec_env, uint32 start);
 
 #ifdef __cplusplus
 }

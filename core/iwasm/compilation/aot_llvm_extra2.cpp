@@ -4,8 +4,10 @@
  */
 
 #include <llvm-c/TargetMachine.h>
+#if LLVM_VERSION_MAJOR < 17
 #include <llvm/ADT/None.h>
 #include <llvm/ADT/Optional.h>
+#endif
 #include <llvm/IR/Instructions.h>
 #if LLVM_VERSION_MAJOR >= 14
 #include <llvm/MC/TargetRegistry.h>
@@ -17,6 +19,13 @@
 #include "bh_assert.h"
 
 #include "aot_llvm_extra2.h"
+
+#if LLVM_VERSION_MAJOR >= 17
+namespace llvm {
+template<typename T>
+using Optional = std::optional<T>;
+}
+#endif
 
 static llvm::Optional<llvm::Reloc::Model>
 convert(LLVMRelocMode reloc_mode)
@@ -49,6 +58,7 @@ convert(LLVMRelocMode reloc_mode)
 #endif
 }
 
+#if LLVM_VERSION_MAJOR < 18
 static llvm::CodeGenOpt::Level
 convert(LLVMCodeGenOptLevel opt_level)
 {
@@ -65,6 +75,24 @@ convert(LLVMCodeGenOptLevel opt_level)
     bh_assert(0);
     return llvm::CodeGenOpt::None;
 }
+#else
+static llvm::CodeGenOptLevel
+convert(LLVMCodeGenOptLevel opt_level)
+{
+    switch (opt_level) {
+        case LLVMCodeGenLevelNone:
+            return llvm::CodeGenOptLevel::None;
+        case LLVMCodeGenLevelLess:
+            return llvm::CodeGenOptLevel::Less;
+        case LLVMCodeGenLevelDefault:
+            return llvm::CodeGenOptLevel::Default;
+        case LLVMCodeGenLevelAggressive:
+            return llvm::CodeGenOptLevel::Aggressive;
+    }
+    bh_assert(0);
+    return llvm::CodeGenOptLevel::None;
+}
+#endif
 
 static llvm::Optional<llvm::CodeModel::Model>
 convert(LLVMCodeModel code_model, bool *jit)

@@ -5,6 +5,7 @@
 
 #include "platform_api_vmcore.h"
 #include "platform_api_extension.h"
+#include "libc_errno.h"
 
 #include <arpa/inet.h>
 #include <netdb.h>
@@ -53,7 +54,7 @@ sockaddr_to_bh_sockaddr(const struct sockaddr *sockaddr,
             struct sockaddr_in *addr = (struct sockaddr_in *)sockaddr;
 
             bh_sockaddr->port = ntohs(addr->sin_port);
-            bh_sockaddr->addr_bufer.ipv4 = ntohl(addr->sin_addr.s_addr);
+            bh_sockaddr->addr_buffer.ipv4 = ntohl(addr->sin_addr.s_addr);
             bh_sockaddr->is_ipv4 = true;
             return BHT_OK;
         }
@@ -65,12 +66,12 @@ sockaddr_to_bh_sockaddr(const struct sockaddr *sockaddr,
 
             bh_sockaddr->port = ntohs(addr->sin6_port);
 
-            for (i = 0; i < sizeof(bh_sockaddr->addr_bufer.ipv6)
-                                / sizeof(bh_sockaddr->addr_bufer.ipv6[0]);
+            for (i = 0; i < sizeof(bh_sockaddr->addr_buffer.ipv6)
+                                / sizeof(bh_sockaddr->addr_buffer.ipv6[0]);
                  i++) {
                 uint16 part_addr = addr->sin6_addr.s6_addr[i * 2]
                                    | (addr->sin6_addr.s6_addr[i * 2 + 1] << 8);
-                bh_sockaddr->addr_bufer.ipv6[i] = ntohs(part_addr);
+                bh_sockaddr->addr_buffer.ipv6[i] = ntohs(part_addr);
             }
 
             bh_sockaddr->is_ipv4 = false;
@@ -91,7 +92,7 @@ bh_sockaddr_to_sockaddr(const bh_sockaddr_t *bh_sockaddr,
         struct sockaddr_in *addr = (struct sockaddr_in *)sockaddr;
         addr->sin_port = htons(bh_sockaddr->port);
         addr->sin_family = AF_INET;
-        addr->sin_addr.s_addr = htonl(bh_sockaddr->addr_bufer.ipv4);
+        addr->sin_addr.s_addr = htonl(bh_sockaddr->addr_buffer.ipv4);
         *socklen = sizeof(*addr);
     }
 #ifdef IPPROTO_IPV6
@@ -101,10 +102,10 @@ bh_sockaddr_to_sockaddr(const bh_sockaddr_t *bh_sockaddr,
         addr->sin6_port = htons(bh_sockaddr->port);
         addr->sin6_family = AF_INET6;
 
-        for (i = 0; i < sizeof(bh_sockaddr->addr_bufer.ipv6)
-                            / sizeof(bh_sockaddr->addr_bufer.ipv6[0]);
+        for (i = 0; i < sizeof(bh_sockaddr->addr_buffer.ipv6)
+                            / sizeof(bh_sockaddr->addr_buffer.ipv6[0]);
              i++) {
-            uint16 part_addr = htons(bh_sockaddr->addr_bufer.ipv6[i]);
+            uint16 part_addr = htons(bh_sockaddr->addr_buffer.ipv6[i]);
             addr->sin6_addr.s6_addr[i * 2] = 0xff & part_addr;
             addr->sin6_addr.s6_addr[i * 2 + 1] = (0xff00 & part_addr) >> 8;
         }
@@ -308,11 +309,13 @@ os_socket_close(bh_socket_t socket)
     return BHT_OK;
 }
 
-int
+__wasi_errno_t
 os_socket_shutdown(bh_socket_t socket)
 {
-    shutdown(socket, O_RDWR);
-    return BHT_OK;
+    if (shutdown(socket, O_RDWR) != 0) {
+        return convert_errno(errno);
+    }
+    return __WASI_ESUCCESS;
 }
 
 int
@@ -799,7 +802,7 @@ os_socket_set_ip_add_membership(bh_socket_t socket,
 {
     assert(imr_multiaddr);
     if (is_ipv6) {
-#ifdef IPPROTO_IPV6
+#if defined(IPPROTO_IPV6) && !defined(BH_PLATFORM_COSMOPOLITAN)
         struct ipv6_mreq mreq;
         for (int i = 0; i < 8; i++) {
             ((uint16_t *)mreq.ipv6mr_multiaddr.s6_addr)[i] =
@@ -837,7 +840,7 @@ os_socket_set_ip_drop_membership(bh_socket_t socket,
 {
     assert(imr_multiaddr);
     if (is_ipv6) {
-#ifdef IPPROTO_IPV6
+#if defined(IPPROTO_IPV6) && !defined(BH_PLATFORM_COSMOPOLITAN)
         struct ipv6_mreq mreq;
         for (int i = 0; i < 8; i++) {
             ((uint16_t *)mreq.ipv6mr_multiaddr.s6_addr)[i] =

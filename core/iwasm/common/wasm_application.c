@@ -107,7 +107,34 @@ execute_main(WASMModuleInstanceCommon *module_inst, int32 argc, char *argv[])
        the actual main function. Directly calling main function
        may cause exception thrown. */
     if ((func = wasm_runtime_lookup_wasi_start_function(module_inst))) {
-        return wasm_runtime_call_wasm(exec_env, func, 0, NULL);
+        const char *wasi_proc_exit_exception = "wasi proc exit";
+
+        ret = wasm_runtime_call_wasm(exec_env, func, 0, NULL);
+#if WASM_ENABLE_THREAD_MGR != 0
+        if (ret) {
+            /* On a successful return from the `_start` function,
+               we terminate other threads by mimicing wasi:proc_exit(0).
+
+               Note:
+               - A return from the `main` function is an equivalent of
+                 exit(). (C standard)
+               - When exit code is 0, wasi-libc's `_start` function just
+                 returns w/o calling `proc_exit`.
+               - A process termination should terminate threads in
+                 the process. */
+
+            wasm_runtime_set_exception(module_inst, wasi_proc_exit_exception);
+            /* exit_code is zero-initialized */
+            ret = false;
+        }
+#endif
+        /* report wasm proc exit as a success */
+        WASMModuleInstance *inst = (WASMModuleInstance *)module_inst;
+        if (!ret && strstr(inst->cur_exception, wasi_proc_exit_exception)) {
+            inst->cur_exception[0] = 0;
+            ret = true;
+        }
+        return ret;
     }
 #endif /* end of WASM_ENABLE_LIBC_WASI */
 
@@ -204,7 +231,7 @@ wasm_application_execute_main(WASMModuleInstanceCommon *module_inst, int32 argc,
                               char *argv[])
 {
     bool ret;
-#if (WASM_ENABLE_MEMORY_PROFILING != 0) || (WASM_ENABLE_DUMP_CALL_STACK != 0)
+#if (WASM_ENABLE_MEMORY_PROFILING != 0)
     WASMExecEnv *exec_env;
 #endif
 
@@ -223,14 +250,6 @@ wasm_application_execute_main(WASMModuleInstanceCommon *module_inst, int32 argc,
 
     if (ret)
         ret = wasm_runtime_get_exception(module_inst) == NULL;
-
-#if WASM_ENABLE_DUMP_CALL_STACK != 0
-    if (!ret) {
-        exec_env = wasm_runtime_get_exec_env_singleton(module_inst);
-        if (exec_env)
-            wasm_runtime_dump_call_stack(exec_env);
-    }
-#endif
 
     return ret;
 }
@@ -293,7 +312,6 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
 #endif
     int32 i, p, module_type;
     uint64 total_size;
-    const char *exception;
     char buf[128];
 
     bh_assert(argc >= 0);
@@ -370,6 +388,18 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
             {
                 float32 f32 = strtof(argv[i], &endptr);
                 if (isnan(f32)) {
+#ifdef _MSC_VER
+                    /*
+                     * Spec tests require the binary representation of NaN to be
+                     * 0x7fc00000 for float and 0x7ff8000000000000 for float;
+                     * however, in MSVC compiler, strtof doesn't return this
+                     * exact value, causing some of the spec test failures. We
+                     * use the value returned by nan/nanf as it is the one
+                     * expected by spec tests.
+                     *
+                     */
+                    f32 = nanf("");
+#endif
                     if (argv[i][0] == '-') {
                         union ieee754_float u;
                         u.f = f32;
@@ -404,6 +434,9 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
                 } u;
                 u.val = strtod(argv[i], &endptr);
                 if (isnan(u.val)) {
+#ifdef _MSC_VER
+                    u.val = nan("");
+#endif
                     if (argv[i][0] == '-') {
                         union ieee754_double ud;
                         ud.d = u.val;
@@ -567,7 +600,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
             {
 #if UINTPTR_MAX == UINT32_MAX
                 if (argv1[k] != 0 && argv1[k] != (uint32)-1)
-                    os_printf("%p:ref.extern", (void *)argv1[k]);
+                    os_printf("0x%" PRIxPTR ":ref.extern", (uintptr_t)argv1[k]);
                 else
                     os_printf("extern:ref.null");
                 k++;
@@ -580,7 +613,7 @@ execute_func(WASMModuleInstanceCommon *module_inst, const char *name,
                 u.parts[1] = argv1[k + 1];
                 k += 2;
                 if (u.val && u.val != (uintptr_t)-1LL)
-                    os_printf("%p:ref.extern", (void *)u.val);
+                    os_printf("0x%" PRIxPTR ":ref.extern", u.val);
                 else
                     os_printf("extern:ref.null");
 #endif
@@ -613,9 +646,7 @@ fail:
     if (argv1)
         wasm_runtime_free(argv1);
 
-    exception = wasm_runtime_get_exception(module_inst);
-    bh_assert(exception);
-    os_printf("%s\n", exception);
+    bh_assert(wasm_runtime_get_exception(module_inst));
     return false;
 }
 

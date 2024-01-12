@@ -38,6 +38,7 @@ enum {
     AOT_LLVMIR_OPT_FILE,
 };
 
+/* always sync it with AOTCompOption in compilation/aot_llvm.h */
 typedef struct AOTCompOption {
     bool is_jit_mode;
     bool is_indirect_mode;
@@ -57,6 +58,7 @@ typedef struct AOTCompOption {
     bool disable_llvm_lto;
     bool enable_llvm_pgo;
     bool enable_stack_estimation;
+    bool quick_invoke_c_api_import;
     char *use_prof_file;
     uint32_t opt_level;
     uint32_t size_level;

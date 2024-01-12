@@ -269,7 +269,7 @@ static uint32
 get_table_init_data_size(AOTTableInitData *table_init_data)
 {
     /*
-     * mode (4 bytes), elem_type (4 bytes), do not need is_dropped field
+     * mode (4 bytes), elem_type (4 bytes)
      *
      * table_index(4 bytes) + init expr type (4 bytes) + init expr value (8
      * bytes)
@@ -913,9 +913,6 @@ get_native_symbol_list_size(AOTCompContext *comp_ctx)
 }
 
 static uint32
-get_name_section_size(AOTCompData *comp_data);
-
-static uint32
 get_custom_sections_size(AOTCompContext *comp_ctx, AOTCompData *comp_data);
 
 static uint32
@@ -970,15 +967,6 @@ get_aot_file_size(AOTCompContext *comp_ctx, AOTCompData *comp_data,
         /* section id + section size + sub section id + symbol count */
         size += (uint32)sizeof(uint32) * 4;
         size += get_native_symbol_list_size(comp_ctx);
-    }
-
-    if (comp_ctx->enable_aux_stack_frame) {
-        /* custom name section */
-        size = align_uint(size, 4);
-        /* section id + section size + sub section id */
-        size += (uint32)sizeof(uint32) * 3;
-        size += (comp_data->aot_name_section_size =
-                     get_name_section_size(comp_data));
     }
 
     size_custom_section = get_custom_sections_size(comp_ctx, comp_data);
@@ -1332,6 +1320,21 @@ get_custom_sections_size(AOTCompContext *comp_ctx, AOTCompData *comp_data)
         const char *section_name = comp_ctx->custom_sections_wp[i];
         const uint8 *content = NULL;
         uint32 length = 0;
+
+        if (strcmp(section_name, "name") == 0) {
+            /* custom name section */
+            comp_data->aot_name_section_size = get_name_section_size(comp_data);
+            if (comp_data->aot_name_section_size == 0) {
+                LOG_WARNING("Can't find custom section [name], ignore it");
+                continue;
+            }
+
+            size = align_uint(size, 4);
+            /* section id + section size + sub section id */
+            size += (uint32)sizeof(uint32) * 3;
+            size += comp_data->aot_name_section_size;
+            continue;
+        }
 
         content = wasm_loader_get_custom_section(comp_data->wasm_module,
                                                  section_name, &length);
@@ -2066,23 +2069,25 @@ static bool
 aot_emit_name_section(uint8 *buf, uint8 *buf_end, uint32 *p_offset,
                       AOTCompData *comp_data, AOTCompContext *comp_ctx)
 {
-    if (comp_ctx->enable_aux_stack_frame) {
-        uint32 offset = *p_offset;
+    uint32 offset = *p_offset;
 
-        *p_offset = offset = align_uint(offset, 4);
+    if (comp_data->aot_name_section_size == 0)
+        return true;
 
-        EMIT_U32(AOT_SECTION_TYPE_CUSTOM);
-        /* sub section id + name section size */
-        EMIT_U32(sizeof(uint32) * 1 + comp_data->aot_name_section_size);
-        EMIT_U32(AOT_CUSTOM_SECTION_NAME);
-        bh_memcpy_s((uint8 *)(buf + offset), (uint32)(buf_end - buf),
-                    comp_data->aot_name_section_buf,
-                    (uint32)comp_data->aot_name_section_size);
-        offset += comp_data->aot_name_section_size;
+    offset = align_uint(offset, 4);
 
-        *p_offset = offset;
-    }
+    EMIT_U32(AOT_SECTION_TYPE_CUSTOM);
+    /* sub section id + name section size */
+    EMIT_U32(sizeof(uint32) * 1 + comp_data->aot_name_section_size);
+    EMIT_U32(AOT_CUSTOM_SECTION_NAME);
+    bh_memcpy_s((uint8 *)(buf + offset), (uint32)(buf_end - buf),
+                comp_data->aot_name_section_buf,
+                (uint32)comp_data->aot_name_section_size);
+    offset += comp_data->aot_name_section_size;
 
+    *p_offset = offset;
+
+    LOG_DEBUG("emit name section");
     return true;
 }
 
@@ -2097,6 +2102,16 @@ aot_emit_custom_sections(uint8 *buf, uint8 *buf_end, uint32 *p_offset,
         const char *section_name = comp_ctx->custom_sections_wp[i];
         const uint8 *content = NULL;
         uint32 length = 0;
+
+        if (strcmp(section_name, "name") == 0) {
+            *p_offset = offset;
+            if (!aot_emit_name_section(buf, buf_end, p_offset, comp_data,
+                                       comp_ctx))
+                return false;
+
+            offset = *p_offset;
+            continue;
+        }
 
         content = wasm_loader_get_custom_section(comp_data->wasm_module,
                                                  section_name, &length);
@@ -2703,6 +2718,7 @@ aot_resolve_stack_sizes(AOTCompContext *comp_ctx, AOTObjectData *obj_data)
                 || (obj_data->target_info.bin_type == AOT_COFF32_BIN_TYPE
                     && !strncmp(name, "_", 1)
                     && !strcmp(name + 1, aot_stack_sizes_alias_name)))) {
+#if 0 /* cf. https://github.com/llvm/llvm-project/issues/67765 */
             uint64 sz = LLVMGetSymbolSize(sym_itr);
             if (sz != sizeof(uint32) * obj_data->func_count
                 /* sz of COFF64/COFF32 is 0, ignore the check */
@@ -2711,6 +2727,7 @@ aot_resolve_stack_sizes(AOTCompContext *comp_ctx, AOTObjectData *obj_data)
                 aot_set_last_error("stack_sizes had unexpected size.");
                 goto fail;
             }
+#endif
             uint64 addr = LLVMGetSymbolAddress(sym_itr);
             if (!(sec_itr =
                       LLVMObjectFileCopySectionIterator(obj_data->binary))) {
@@ -3587,6 +3604,10 @@ aot_emit_aot_file_buf(AOTCompContext *comp_ctx, AOTCompData *comp_data,
         return NULL;
 
     aot_file_size = get_aot_file_size(comp_ctx, comp_data, obj_data);
+    if (aot_file_size == 0) {
+        aot_set_last_error("get aot file size failed");
+        goto fail1;
+    }
 
     if (!(buf = aot_file_buf = wasm_runtime_malloc(aot_file_size))) {
         aot_set_last_error("allocate memory failed.");
@@ -3608,7 +3629,6 @@ aot_emit_aot_file_buf(AOTCompContext *comp_ctx, AOTCompData *comp_data,
         || !aot_emit_relocation_section(buf, buf_end, &offset, comp_ctx,
                                         comp_data, obj_data)
         || !aot_emit_native_symbol(buf, buf_end, &offset, comp_ctx)
-        || !aot_emit_name_section(buf, buf_end, &offset, comp_data, comp_ctx)
         || !aot_emit_custom_sections(buf, buf_end, &offset, comp_data,
                                      comp_ctx))
         goto fail2;

@@ -8,6 +8,7 @@
 
 #include "wasm.h"
 #include "bh_atomic.h"
+#include "bh_bitmap.h"
 #include "bh_hashmap.h"
 #include "../common/wasm_runtime_common.h"
 #include "../common/wasm_exec_env.h"
@@ -79,8 +80,16 @@ typedef union {
 struct WASMMemoryInstance {
     /* Module type */
     uint32 module_type;
-    /* Shared memory flag */
-    bh_atomic_32_t ref_count; /* 0: non-shared, > 0: reference count */
+
+    /* Whether the memory is shared */
+    uint8 is_shared_memory;
+
+    /* One byte padding */
+    uint8 __padding__;
+
+    /* Reference count of the memory instance:
+         0: non-shared memory, > 0: shared memory */
+    bh_atomic_16_t ref_count;
 
     /* Number bytes per page */
     uint32 num_bytes_per_page;
@@ -213,11 +222,18 @@ typedef struct CApiFuncImport {
 /* The common part of WASMModuleInstanceExtra and AOTModuleInstanceExtra */
 typedef struct WASMModuleInstanceExtraCommon {
     CApiFuncImport *c_api_func_imports;
+    void *contexts[WASM_MAX_INSTANCE_CONTEXTS];
     /* pointer to the exec env currently used */
     WASMExecEnv *cur_exec_env;
-#if WASM_CONFIGUABLE_BOUNDS_CHECKS != 0
+#if WASM_CONFIGURABLE_BOUNDS_CHECKS != 0
     /* Disable bounds checks or not */
     bool disable_bounds_checks;
+#endif
+#if WASM_ENABLE_BULK_MEMORY != 0
+    bh_bitmap *data_dropped;
+#endif
+#if WASM_ENABLE_REF_TYPES != 0
+    bh_bitmap *elem_dropped;
 #endif
 } WASMModuleInstanceExtraCommon;
 
@@ -299,12 +315,8 @@ struct WASMModuleInstance {
        it denotes `AOTModule *` */
     DefPointer(WASMModule *, module);
 
-#if WASM_ENABLE_LIBC_WASI
-    /* WASI context */
-    DefPointer(WASIContext *, wasi_ctx);
-#else
-    DefPointer(void *, wasi_ctx);
-#endif
+    DefPointer(void *, used_to_be_wasi_ctx); /* unused */
+
     DefPointer(WASMExecEnv *, exec_env_singleton);
     /* Array of function pointers to import functions,
        not available in AOTModuleInstance */
@@ -399,7 +411,11 @@ wasm_get_func_code_end(WASMFunctionInstance *func)
 }
 
 WASMModule *
-wasm_load(uint8 *buf, uint32 size, char *error_buf, uint32 error_buf_size);
+wasm_load(uint8 *buf, uint32 size,
+#if WASM_ENABLE_MULTI_MODULE != 0
+          bool main_module,
+#endif
+          char *error_buf, uint32 error_buf_size);
 
 WASMModule *
 wasm_load_from_sections(WASMSection *section_list, char *error_buf,
@@ -668,6 +684,16 @@ llvm_jit_free_frame(WASMExecEnv *exec_env);
 #if WASM_ENABLE_LIBC_WASI != 0 && WASM_ENABLE_MULTI_MODULE != 0
 void
 wasm_propagate_wasi_args(WASMModule *module);
+#endif
+
+#if WASM_ENABLE_THREAD_MGR != 0
+void
+exception_lock(WASMModuleInstance *module_inst);
+void
+exception_unlock(WASMModuleInstance *module_inst);
+#else
+#define exception_lock(module_inst) (void)(module_inst)
+#define exception_unlock(module_inst) (void)(module_inst)
 #endif
 
 #ifdef __cplusplus

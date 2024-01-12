@@ -173,7 +173,7 @@ strcspn(const char *s, const char *reject)
 #endif
 
 void *
-os_mmap(void *hint, size_t size, int prot, int flags)
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
     if ((uint64)size >= UINT32_MAX)
         return NULL;
@@ -213,6 +213,10 @@ os_dcache_flush()
     __asm__ __volatile__("sync");
 #endif
 }
+
+void
+os_icache_flush(void *start, size_t len)
+{}
 
 void
 set_exec_mem_alloc_func(exec_mem_alloc_func_t alloc_func,

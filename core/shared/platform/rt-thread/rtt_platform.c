@@ -140,6 +140,10 @@ os_thread_get_stack_boundary(void)
     return tid->stack_addr;
 }
 
+void
+os_thread_jit_write_protect_np(bool enabled)
+{}
+
 int
 os_mutex_init(korp_mutex *mutex)
 {
@@ -187,7 +191,7 @@ os_cond_wait(korp_cond *cond, korp_mutex *mutex)
 }
 
 void *
-os_mmap(void *hint, size_t size, int prot, int flags)
+os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
 {
     return rt_malloc(size);
 }
@@ -206,4 +210,8 @@ os_mprotect(void *addr, size_t size, int prot)
 
 void
 os_dcache_flush(void)
+{}
+
+void
+os_icache_flush(void *start, size_t len)
 {}

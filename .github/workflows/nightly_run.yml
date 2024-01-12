@@ -8,9 +8,11 @@ on:
     types:
       - opened
       - synchronize
-    #running nightly pipeline if you're changing it 
+    # running nightly pipeline if you're changing it 
+    # stress tests are run only in nightly at the moment, so running them in they are changed
     paths:
       - ".github/workflows/nightly_run.yml"
+      - "core/iwasm/libraries/lib-wasi-threads/stress-test/**"
       
   # midnight UTC
   schedule:
@@ -47,10 +49,17 @@ jobs:
     with:
       os: "ubuntu-20.04"
       arch: "X86"
+  build_llvm_libraries_on_ubuntu_2204:
+    uses: ./.github/workflows/build_llvm_libraries.yml
+    with:
+      os: "ubuntu-22.04"
+      arch: "X86"
   
   build_wamrc:
     needs:
-      [build_llvm_libraries_on_ubuntu_2004]
+      [
+        build_llvm_libraries_on_ubuntu_2004,
+      ]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -88,7 +97,9 @@ jobs:
 
   build_iwasm:
     needs:
-      [build_llvm_libraries_on_ubuntu_2004]
+      [
+        build_llvm_libraries_on_ubuntu_2004,
+      ]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -125,9 +136,7 @@ jobs:
         exclude:
           # uncompatiable feature and platform
           # uncompatiable mode and feature
-          # MULTI_MODULE only on INTERP mode
-          - make_options_run_mode: $AOT_BUILD_OPTIONS
-            make_options_feature: "-DWAMR_BUILD_MULTI_MODULE=1"
+          # MULTI_MODULE only on INTERP mode and AOT mode
           - make_options_run_mode: $FAST_JIT_BUILD_OPTIONS
             make_options_feature: "-DWAMR_BUILD_MULTI_MODULE=1"
           - make_options_run_mode: $LLVM_LAZY_JIT_BUILD_OPTIONS
@@ -250,7 +259,7 @@ jobs:
         exclude:
           # uncompatiable feature and platform
           # uncompatiable mode and feature
-          # MULTI_MODULE only on INTERP mode
+          # MULTI_MODULE only on INTERP mode and AOT mode
           - make_options_run_mode: $FAST_JIT_BUILD_OPTIONS
             make_options_feature: "-DWAMR_BUILD_MULTI_MODULE=1"
           # SIMD only on JIT/AOT mode
@@ -380,7 +389,12 @@ jobs:
         working-directory: samples/wasm-c-api
 
   build_samples_others:
-    needs: [build_iwasm]
+    needs:
+      [
+        build_iwasm,
+        build_llvm_libraries_on_ubuntu_2004,
+        build_wamrc,
+      ]
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -393,6 +407,9 @@ jobs:
           [
             "https://github.com/WebAssembly/wabt/releases/download/1.0.31/wabt-1.0.31-ubuntu.tar.gz",
           ]
+        include:
+          - os: ubuntu-20.04
+            llvm_cache_key: ${{ needs.build_llvm_libraries_on_ubuntu_2004.outputs.cache_key }}
     steps:
       - name: checkout
         uses: actions/checkout@v3
@@ -409,6 +426,26 @@ jobs:
           sudo wget ${{ matrix.wabt_release }}
           sudo tar -xzf wabt-1.0.31-*.tar.gz
           sudo mv wabt-1.0.31 wabt
+
+      - name: Get LLVM libraries
+        id: retrieve_llvm_libs
+        uses: actions/cache@v3
+        with:
+          path: |
+            ./core/deps/llvm/build/bin
+            ./core/deps/llvm/build/include
+            ./core/deps/llvm/build/lib
+            ./core/deps/llvm/build/libexec
+            ./core/deps/llvm/build/share
+          key: ${{ matrix.llvm_cache_key }}
+
+      - name: Build wamrc
+        run: |
+          mkdir build && cd build
+          cmake -D WAMR_BUILD_SANITIZER="${{matrix.sanitizer}}" ..
+          cmake --build . --config Release --parallel 4
+        working-directory: wamr-compiler
+
       - name: Build Sample [basic]
         run: |
           cd samples/basic
@@ -432,9 +469,10 @@ jobs:
         run: |
           cd samples/multi-module
           mkdir build && cd build
-          cmake ..
+          cmake .. -DWAMR_BUILD_AOT=1
           cmake --build . --config Release --parallel 4
-          ./multi_module
+          ./multi_module mC.wasm
+          ./multi_module mC.aot
       - name: Build Sample [spawn-thread]
         run: |
           cd samples/spawn-thread
@@ -463,19 +501,26 @@ jobs:
           cmake ..
           cmake --build . --config Release --parallel 4
           ./iwasm wasm-apps/no_pthread.wasm
+
+      - name: Build Sample [shared-module]
+        run: |
+          cd samples/shared-module
+          ./build.sh
+          ./run.sh
   test:
     needs:
       [
         build_iwasm,
         build_llvm_libraries_on_ubuntu_2004,
+        build_llvm_libraries_on_ubuntu_2204,
         build_wamrc,
       ]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-20.04]
-        sanitizer: ["", "ubsan", "asan"]
+        os: [ubuntu-20.04, ubuntu-22.04]
+        sanitizer: ["", "ubsan", "asan", "tsan"]
         running_mode:
           [
             "classic-interp",
@@ -501,11 +546,14 @@ jobs:
           - os: ubuntu-20.04
             llvm_cache_key: ${{ needs.build_llvm_libraries_on_ubuntu_2004.outputs.cache_key }}
             ubuntu_version: "20.04"
+          - os: ubuntu-22.04
+            llvm_cache_key: ${{ needs.build_llvm_libraries_on_ubuntu_2204.outputs.cache_key }}
+            ubuntu_version: "22.04"
 
         exclude:
           # uncompatiable modes and features
           - os: ubuntu-20.04
-            sanitizer: asan
+            sanitizer: tsan
           # asan works only for aot now
           - running_mode: "classic-interp"
             sanitizer: asan
@@ -517,14 +565,20 @@ jobs:
             sanitizer: asan
           - running_mode: "multi-tier-jit"
             sanitizer: asan
+          - running_mode: "classic-interp"
+            sanitizer: tsan
+          - running_mode: "jit"
+            sanitizer: tsan
+          - running_mode: "fast-jit"
+            sanitizer: tsan
+          - running_mode: "multi-tier-jit"
+            sanitizer: tsan
           # classic-interp and fast-interp don't support simd
           - running_mode: "classic-interp"
             test_option: $SIMD_TEST_OPTIONS
           - running_mode: "fast-interp"
             test_option: $SIMD_TEST_OPTIONS
-          # aot and jit don't support multi module
-          - running_mode: "aot"
-            test_option: $MULTI_MODULES_TEST_OPTIONS
+          # llvm jit doesn't support multi module
           - running_mode: "jit"
             test_option: $MULTI_MODULES_TEST_OPTIONS
           # fast-jit doesn't support multi module, simd
@@ -568,9 +622,10 @@ jobs:
            || matrix.test_option == '$WASI_TEST_OPTIONS')
           && matrix.running_mode != 'fast-jit' && matrix.running_mode != 'jit' && matrix.running_mode != 'multi-tier-jit'
         run: echo "TEST_ON_X86_32=true" >> $GITHUB_ENV
-      
-      - name: set sanitizer
-        run: echo "WAMR_BUILD_SANITIZER=${{ matrix.sanitizer }}" >> $GITHUB_ENV
+
+      - name: set additional tsan options
+        run: echo "TSAN_OPTIONS=suppressions=$PWD/tsan_suppressions.txt" >> $GITHUB_ENV
+        working-directory: tests/wamr-test-suites
 
       #only download llvm libraries in jit and aot mode
       - name: Get LLVM libraries
@@ -599,6 +654,11 @@ jobs:
         run: bash build.sh --sysroot "$SYSROOT_PATH"
         working-directory: ./core/iwasm/libraries/lib-wasi-threads/test/
 
+      - name: Build WASI thread stress tests
+        if: matrix.test_option == '$WASI_TEST_OPTIONS'
+        run: bash build.sh --sysroot "$SYSROOT_PATH"
+        working-directory: ./core/iwasm/libraries/lib-wasi-threads/stress-test/
+
       - name: build socket api tests
         if: matrix.test_option == '$WASI_TEST_OPTIONS'
         run: bash build.sh
@@ -606,7 +666,7 @@ jobs:
 
       - name: run tests
         timeout-minutes: 40
-        run: ./test_wamr.sh ${{ matrix.test_option }} -t ${{ matrix.running_mode }}
+        run: ./test_wamr.sh ${{ matrix.test_option }} -t ${{ matrix.running_mode }} -T "${{ matrix.sanitizer }}"
         working-directory: ./tests/wamr-test-suites
 
       #only install x32 support libraries when to run x86_32 cases

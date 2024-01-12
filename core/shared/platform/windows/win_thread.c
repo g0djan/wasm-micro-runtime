@@ -542,6 +542,62 @@ os_mutex_unlock(korp_mutex *mutex)
 }
 
 int
+os_rwlock_init(korp_rwlock *lock)
+{
+    bh_assert(lock);
+
+    InitializeSRWLock(&(lock->lock));
+    lock->exclusive = false;
+
+    return BHT_OK;
+}
+
+int
+os_rwlock_rdlock(korp_rwlock *lock)
+{
+    bh_assert(lock);
+
+    AcquireSRWLockShared(&(lock->lock));
+
+    return BHT_OK;
+}
+
+int
+os_rwlock_wrlock(korp_rwlock *lock)
+{
+    bh_assert(lock);
+
+    AcquireSRWLockExclusive(&(lock->lock));
+    lock->exclusive = true;
+
+    return BHT_OK;
+}
+
+int
+os_rwlock_unlock(korp_rwlock *lock)
+{
+    bh_assert(lock);
+
+    if (lock->exclusive) {
+        lock->exclusive = false;
+        ReleaseSRWLockExclusive(&(lock->lock));
+    }
+    else {
+        ReleaseSRWLockShared(&(lock->lock));
+    }
+
+    return BHT_OK;
+}
+
+int
+os_rwlock_destroy(korp_rwlock *lock)
+{
+    (void)lock;
+
+    return BHT_OK;
+}
+
+int
 os_cond_init(korp_cond *cond)
 {
     bh_assert(cond);
@@ -711,6 +767,10 @@ os_thread_get_stack_boundary()
     thread_stack_boundary = (uint8 *)(uintptr_t)low_limit + page_size * 5;
     return thread_stack_boundary;
 }
+
+void
+os_thread_jit_write_protect_np(bool enabled)
+{}
 
 #ifdef OS_ENABLE_HW_BOUND_CHECK
 static os_thread_local_attribute bool thread_signal_inited = false;

@@ -91,8 +91,10 @@ endif ()
 
 if (WAMR_BUILD_LIBC_UVWASI EQUAL 1)
     include (${IWASM_DIR}/libraries/libc-uvwasi/libc_uvwasi.cmake)
+    set (WAMR_BUILD_MODULE_INST_CONTEXT 1)
 elseif (WAMR_BUILD_LIBC_WASI EQUAL 1)
     include (${IWASM_DIR}/libraries/libc-wasi/libc_wasi.cmake)
+    set (WAMR_BUILD_MODULE_INST_CONTEXT 1)
 endif ()
 
 if (WAMR_BUILD_LIB_PTHREAD_SEMAPHORE EQUAL 1)
@@ -163,7 +165,11 @@ file (GLOB header
 )
 LIST (APPEND RUNTIME_LIB_HEADER_LIST ${header})
 
-enable_language (ASM)
+if (WAMR_BUILD_PLATFORM STREQUAL "windows")
+    enable_language (ASM_MASM)
+else()
+    enable_language (ASM)
+endif()
 
 include (${SHARED_PLATFORM_CONFIG})
 include (${SHARED_DIR}/mem-alloc/mem_alloc.cmake)
