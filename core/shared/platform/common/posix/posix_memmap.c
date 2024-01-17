@@ -77,7 +77,7 @@ os_mmap(void *hint, size_t size, int prot, int flags, os_file_handle file)
     if (prot & MMAP_PROT_EXEC)
         map_prot |= PROT_EXEC;
 
-#if defined(BUILD_TARGET_X86_64) || defined(BUILD_TARGET_AMD_64)
+#if (defined(BUILD_TARGET_X86_64) || defined(BUILD_TARGET_AMD_64)) && defined(MAP_32BIT)
     if (flags & MMAP_MAP_32BIT)
         map_flags |= MAP_32BIT;
 #endif
