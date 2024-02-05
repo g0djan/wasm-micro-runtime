@@ -2314,7 +2314,18 @@ aot_check_app_addr_and_convert(AOTModuleInstance *module_inst, bool is_str,
 void *
 aot_memmove(void *dest, const void *src, size_t n)
 {
-    return memmove(dest, src, n);
+    if (not_init_data_race) {
+        not_init_data_race = pthread_mutex_init(&mutex_data_race
+, NULL);
+    }
+
+    pthread_mutex_lock(&mutex_data_race);
+
+    void* result = memmove(dest, src, n);
+
+
+    pthread_mutex_unlock(&mutex_data_race);
+    return result;
 }
 
 void *

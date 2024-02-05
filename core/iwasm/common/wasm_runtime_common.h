@@ -21,6 +21,9 @@
 #endif
 #endif
 
+static pthread_mutex_t mutex_data_race;
+static int not_init_data_race = 1;
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -134,7 +134,7 @@ endif ()
 
 # Sanitizers
 
-set(WAMR_BUILD_SANITIZER $ENV{WAMR_BUILD_SANITIZER})
+set(WAMR_BUILD_SANITIZER tsan)
 
 if (NOT DEFINED WAMR_BUILD_SANITIZER)
   set(WAMR_BUILD_SANITIZER "")
@@ -148,6 +148,7 @@ elseif (WAMR_BUILD_SANITIZER STREQUAL "asan")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
   endif()
 elseif (WAMR_BUILD_SANITIZER STREQUAL "tsan")
+  message(STATUS "tsan")
   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -O0 -fno-omit-frame-pointer -fsanitize=thread -fno-sanitize-recover=all" )
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread")
 elseif (NOT (WAMR_BUILD_SANITIZER STREQUAL "") )

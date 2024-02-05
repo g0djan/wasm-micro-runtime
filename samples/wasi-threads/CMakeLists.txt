@@ -65,7 +65,6 @@ add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
 
 
 ################ wasm application ################
-add_subdirectory(wasm-apps)
 
 ################ wamr runtime ################
 include (${SHARED_DIR}/utils/uncommon/shared_uncommon.cmake)

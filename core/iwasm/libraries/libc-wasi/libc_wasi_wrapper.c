@@ -8,6 +8,7 @@
 #include "wasm_export.h"
 #include "wasm_runtime_common.h"
 #include "wasmtime_ssp.h"
+#include <pthread.h>
 
 #if WASM_ENABLE_THREAD_MGR != 0
 #include "../../../thread-mgr/thread_manager.h"
@@ -627,11 +628,20 @@ wasi_fd_sync(wasm_exec_env_t exec_env, wasi_fd_t fd)
     return wasmtime_ssp_fd_sync(exec_env, curfds, fd);
 }
 
+
+
 static wasi_errno_t
 wasi_fd_write(wasm_exec_env_t exec_env, wasi_fd_t fd,
               const iovec_app_t *iovec_app, uint32 iovs_len,
               uint32 *nwritten_app)
 {
+    if (not_init_data_race) {
+        not_init_data_race = pthread_mutex_init(&mutex_data_race
+, NULL);
+    }
+
+    pthread_mutex_lock(&mutex_data_race);
+
     wasm_module_inst_t module_inst = get_module_inst(exec_env);
     wasi_ctx_t wasi_ctx = get_wasi_ctx(module_inst);
     struct fd_table *curfds = wasi_ctx_get_curfds(module_inst, wasi_ctx);
@@ -641,19 +651,29 @@ wasi_fd_write(wasm_exec_env_t exec_env, wasi_fd_t fd,
     uint32 i;
     wasi_errno_t err;
 
-    if (!wasi_ctx)
+    if (!wasi_ctx) {
+        pthread_mutex_unlock(&mutex_data_race
+);
         return (wasi_errno_t)-1;
+    }
 
     total_size = sizeof(iovec_app_t) * (uint64)iovs_len;
     if (!validate_native_addr(nwritten_app, (uint32)sizeof(uint32))
         || total_size >= UINT32_MAX
-        || !validate_native_addr((void *)iovec_app, (uint32)total_size))
-        return (wasi_errno_t)-1;
+        || !validate_native_addr((void *)iovec_app, (uint32)total_size)) {
+            pthread_mutex_unlock(&mutex_data_race
+    );
+            return (wasi_errno_t)-1;
+        }
+        
 
     total_size = sizeof(wasi_ciovec_t) * (uint64)iovs_len;
     if (total_size >= UINT32_MAX
-        || !(ciovec_begin = wasm_runtime_malloc((uint32)total_size)))
+        || !(ciovec_begin = wasm_runtime_malloc((uint32)total_size))){
+        pthread_mutex_unlock(&mutex_data_race
+);
         return (wasi_errno_t)-1;
+    }
 
     ciovec = ciovec_begin;
 
@@ -678,6 +698,7 @@ wasi_fd_write(wasm_exec_env_t exec_env, wasi_fd_t fd,
 
 fail:
     wasm_runtime_free(ciovec_begin);
+    pthread_mutex_unlock(&mutex_data_race);
     return err;
 }
 
