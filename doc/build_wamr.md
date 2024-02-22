@@ -160,8 +160,9 @@ Currently we only profile the memory consumption of module, module_instance and 
 - **WAMR_APP_THREAD_STACK_SIZE_MAX**=n, default to 8 MB (8388608) if not set
 > Note: the AOT boundary check with hardware trap mechanism might consume large stack since the OS may lazily grow the stack mapping as a guard page is hit, we may use this configuration to reduce the total stack usage, e.g. -DWAMR_APP_THREAD_STACK_SIZE_MAX=131072 (128 KB).
 
-#### **WAMR_BH_VPRINTF**=<vprintf_callback>, default to disable if not set
-> Note: if the vprintf_callback function is provided by developer, the os_printf() and os_vprintf() in Linux, Darwin, Windows and VxWorks platforms, besides WASI Libc output will call the callback function instead of libc vprintf() function to redirect the stdout output. For example, developer can define the callback function like below outside runtime lib:
+#### **Set vprintf callback**
+- **WAMR_BH_VPRINTF**=<vprintf_callback>, default to disable if not set
+> Note: if the vprintf_callback function is provided by developer, the os_printf() and os_vprintf() in Linux, Darwin, Windows, VxWorks, Android and esp-idf platforms, besides WASI Libc output will call the callback function instead of libc vprintf() function to redirect the stdout output. For example, developer can define the callback function like below outside runtime lib:
 >
 > ```C
 > int my_vprintf(const char *format, va_list ap)
