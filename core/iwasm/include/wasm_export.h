@@ -180,6 +180,31 @@ typedef struct RuntimeInitArgs {
     bool enable_linux_perf;
 } RuntimeInitArgs;
 
+#ifndef LOAD_ARGS_OPTION_DEFINED
+#define LOAD_ARGS_OPTION_DEFINED
+typedef struct LoadArgs {
+    char *name;
+    /* This option is only used by the Wasm C API (see wasm_c_api.h) */
+    bool clone_wasm_binary;
+    /* False by default, used by AOT/wasm loader only.
+    If true, the AOT/wasm loader creates a copy of some module fields (e.g.
+    const strings), making it possible to free the wasm binary buffer after
+    loading. */
+    bool wasm_binary_freeable;
+    /* TODO: more fields? */
+} LoadArgs;
+#endif /* LOAD_ARGS_OPTION_DEFINED */
+
+#ifndef INSTANTIATION_ARGS_OPTION_DEFINED
+#define INSTANTIATION_ARGS_OPTION_DEFINED
+/* WASM module instantiation arguments */
+typedef struct InstantiationArgs {
+    uint32_t default_stack_size;
+    uint32_t host_managed_heap_size;
+    uint32_t max_memory_pages;
+} InstantiationArgs;
+#endif /* INSTANTIATION_ARGS_OPTION_DEFINED */
+
 #ifndef WASM_VALKIND_T_DEFINED
 #define WASM_VALKIND_T_DEFINED
 typedef uint8_t wasm_valkind_t;
@@ -405,6 +430,13 @@ wasm_runtime_find_module_registered(const char *module_name);
 WASM_RUNTIME_API_EXTERN wasm_module_t
 wasm_runtime_load(uint8_t *buf, uint32_t size,
                   char *error_buf, uint32_t error_buf_size);
+
+/**
+ * Load a WASM module with specified load argument.
+ */
+WASM_RUNTIME_API_EXTERN wasm_module_t
+wasm_runtime_load_ex(uint8_t *buf, uint32_t size, const LoadArgs *args,
+                     char *error_buf, uint32_t error_buf_size);
 
 /**
  * Load a WASM module from a specified WASM or AOT section list.
@@ -1625,6 +1657,16 @@ WASM_RUNTIME_API_EXTERN void
 wasm_runtime_end_blocking_op(wasm_exec_env_t exec_env);
 
 /* clang-format on */
+
+/**
+ * Query whether the wasm binary buffer used to create the module can be freed
+ *
+ * @param module_inst the target module instance
+ * @return true if the wasm binary buffer can be freed
+ */
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_is_underlying_binary_freeable(
+    const wasm_module_inst_t module_inst);
 
 #ifdef __cplusplus
 }

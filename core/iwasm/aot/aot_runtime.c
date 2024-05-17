@@ -1179,6 +1179,10 @@ aot_instantiate(AOTModule *module, AOTModuleInstance *parent,
                           "failed to allocate bitmaps");
             goto fail;
         }
+        for (i = 0; i < module->mem_init_data_count; i++) {
+            if (!module->mem_init_data_list[i]->is_passive)
+                bh_bitmap_set_bit(common->data_dropped, i);
+        }
     }
 #endif
 #if WASM_ENABLE_REF_TYPES != 0

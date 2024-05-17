@@ -251,6 +251,12 @@ typedef struct AOTModule {
 #if WASM_ENABLE_LOAD_CUSTOM_SECTION != 0
     WASMCustomSection *custom_section_list;
 #endif
+
+    /* user defined name */
+    char *name;
+
+    /* Whether the underlying wasm binary buffer can be freed */
+    bool is_binary_freeable;
 } AOTModule;
 
 #define AOTMemoryInstance WASMMemoryInstance
@@ -356,8 +362,8 @@ typedef struct LLVMProfileData_64 {
  * @return return AOT module loaded, NULL if failed
  */
 AOTModule *
-aot_load_from_aot_file(const uint8 *buf, uint32 size, char *error_buf,
-                       uint32 error_buf_size);
+aot_load_from_aot_file(const uint8 *buf, uint32 size, const LoadArgs *args,
+                       char *error_buf, uint32 error_buf_size);
 
 /**
  * Load a AOT module from a specified AOT section list.
