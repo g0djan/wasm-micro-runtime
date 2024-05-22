@@ -543,7 +543,7 @@ WASM_API_EXTERN own wasm_shared_module_t* wasm_module_share(wasm_module_t*);
 WASM_API_EXTERN own wasm_module_t* wasm_module_obtain(wasm_store_t*, wasm_shared_module_t*);
 WASM_API_EXTERN void wasm_shared_module_delete(own wasm_shared_module_t*);
 
-WASM_API_EXTERN bool wasm_module_is_underlying_binary_freeable(const wasm_module_t *module, const struct wasm_instance_t* instance);
+WASM_API_EXTERN bool wasm_module_is_underlying_binary_freeable(const wasm_module_t *module);
 
 // Function Instances
 

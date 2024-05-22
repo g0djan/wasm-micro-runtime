@@ -2402,8 +2402,8 @@ fail:
 
 static bool
 load_data_segment_section(const uint8 *buf, const uint8 *buf_end,
-                          WASMModule *module, char *error_buf,
-                          uint32 error_buf_size)
+                          WASMModule *module, bool is_load_from_file_buf,
+                          char *error_buf, uint32 error_buf_size)
 {
     const uint8 *p = buf, *p_end = buf_end;
     uint32 data_seg_count, i, mem_index, data_seg_len;
@@ -2501,7 +2501,18 @@ load_data_segment_section(const uint8 *buf, const uint8 *buf_end,
 
             dataseg->data_length = data_seg_len;
             CHECK_BUF(p, p_end, data_seg_len);
-            dataseg->data = (uint8 *)p;
+            if (!is_load_from_file_buf) {
+                if (!(dataseg->data = loader_malloc(
+                          dataseg->data_length, error_buf, error_buf_size))) {
+                    return false;
+                }
+
+                bh_memcpy_s(dataseg->data, dataseg->data_length, p,
+                            data_seg_len);
+            }
+            else {
+                dataseg->data = (uint8 *)p;
+            }
             p += data_seg_len;
         }
     }
@@ -3363,7 +3374,8 @@ load_from_sections(WASMModule *module, WASMSection *sections,
                     return false;
                 break;
             case SECTION_TYPE_DATA:
-                if (!load_data_segment_section(buf, buf_end, module, error_buf,
+                if (!load_data_segment_section(buf, buf_end, module,
+                                               is_load_from_file_buf, error_buf,
                                                error_buf_size))
                     return false;
                 break;
@@ -4238,8 +4250,11 @@ wasm_loader_unload(WASMModule *module)
 
     if (module->data_segments) {
         for (i = 0; i < module->data_seg_count; i++) {
-            if (module->data_segments[i])
+            if (module->data_segments[i]) {
+                if (module->is_binary_freeable)
+                    wasm_runtime_free(module->data_segments[i]->data);
                 wasm_runtime_free(module->data_segments[i]);
+            }
         }
         wasm_runtime_free(module->data_segments);
     }

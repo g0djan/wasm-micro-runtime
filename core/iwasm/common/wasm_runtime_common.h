@@ -1129,8 +1129,7 @@ void
 wasm_runtime_interrupt_blocking_op(WASMExecEnv *exec_env);
 
 WASM_RUNTIME_API_EXTERN bool
-wasm_runtime_is_underlying_binary_freeable(
-    const wasm_module_inst_t module_inst);
+wasm_runtime_is_underlying_binary_freeable(const wasm_module_t module);
 
 #if WASM_ENABLE_LINUX_PERF != 0
 bool
