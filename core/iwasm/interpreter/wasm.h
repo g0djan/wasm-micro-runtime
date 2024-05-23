@@ -330,6 +330,7 @@ typedef struct WASMDataSeg {
     bool is_passive;
 #endif
     uint8 *data;
+    bool is_data_cloned;
 } WASMDataSeg;
 
 typedef struct BlockAddr {
