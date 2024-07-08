@@ -2067,11 +2067,14 @@ wasmtime_ssp_poll_oneoff(wasm_exec_env_t exec_env, struct fd_table *curfds,
                     ? TIMER_ABSTIME
                     : 0,
                 &ts, NULL);
-            if (ret != 0)
+            if (ret != 0) {
                 out[0].error = convert_errno(ret);
+                LOG_ERROR("clock_nanosleep failed %d (%d)", out[0].error, ret);
+            }
         }
         else {
             out[0].error = __WASI_ENOTSUP;
+            LOG_ERROR("Unable to convert wasi clockid to clockid");
         }
 #else
         switch (in[0].u.u.clock.clock_id) {
