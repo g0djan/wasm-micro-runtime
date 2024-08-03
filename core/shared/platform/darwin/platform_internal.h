@@ -38,6 +38,10 @@
 #include <sys/socket.h>
 #include <sys/resource.h>
 
+#if defined(__APPLE__) || defined(__MACH__)
+#include <TargetConditionals.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
