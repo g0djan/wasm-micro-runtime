@@ -5,6 +5,7 @@
 
 #include "thread_manager.h"
 #include "../common/wasm_c_api_internal.h"
+#include <stdbool.h>
 
 #if WASM_ENABLE_INTERP != 0
 #include "../interpreter/wasm_runtime.h"
@@ -258,6 +259,7 @@ wasm_cluster_create(WASMExecEnv *exec_env)
         LOG_ERROR("thread manager error: failed to init mutex");
         return NULL;
     }
+    cluster->exception_frames_initialised = false;
 
     /* Prepare the aux stack top and size for every thread */
     if (!wasm_exec_env_get_aux_stack(exec_env, &aux_stack_start,
@@ -373,6 +375,7 @@ wasm_cluster_destroy(WASMCluster *cluster)
 
 #if WASM_ENABLE_DUMP_CALL_STACK != 0
     bh_vector_destroy(&cluster->exception_frames);
+    cluster->exception_frames_initialised = false;
 #endif
 
     wasm_runtime_free(cluster);
@@ -1337,6 +1340,7 @@ wasm_cluster_set_exception(WASMExecEnv *exec_env, const char *exception)
             && wasm_interp_create_call_stack(exec_env)) {
             wasm_frame_vec_clone_internal(module_inst->frames,
                                           &cluster->exception_frames);
+            cluster->exception_frames_initialised = true;
         }
 #endif
 
@@ -1345,10 +1349,28 @@ wasm_cluster_set_exception(WASMExecEnv *exec_env, const char *exception)
             && aot_create_call_stack(exec_env)) {
             wasm_frame_vec_clone_internal(module_inst->frames,
                                           &cluster->exception_frames);
+            cluster->exception_frames_initialised = true;
         }
 #endif
     }
 #endif /* WASM_ENABLE_DUMP_CALL_STACK != 0 */
+    cluster->has_exception = has_exception;
+    traverse_list(&cluster->exec_env_list, set_exception_visitor, &data);
+    os_mutex_unlock(&cluster->lock);
+}
+
+void
+wasm_cluster_set_exception_from_another_thread(WASMExecEnv *exec_env, const char *exception)
+{
+    const bool has_exception = exception != NULL;
+    WASMCluster *cluster = wasm_exec_env_get_cluster(exec_env);
+    bh_assert(cluster);
+
+    struct spread_exception_data data;
+    data.skip = NULL;
+    data.exception = exception;
+
+    os_mutex_lock(&cluster->lock);
     cluster->has_exception = has_exception;
     traverse_list(&cluster->exec_env_list, set_exception_visitor, &data);
     os_mutex_unlock(&cluster->lock);

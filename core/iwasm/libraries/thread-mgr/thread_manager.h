@@ -57,6 +57,7 @@ struct WASMCluster {
      * saved into the cluster
      */
     Vector exception_frames;
+    bool exception_frames_initialised;
 #endif
 };
 
@@ -149,6 +150,9 @@ wasm_clusters_search_exec_env(WASMModuleInstanceCommon *module_inst);
 
 void
 wasm_cluster_set_exception(WASMExecEnv *exec_env, const char *exception);
+
+void
+wasm_cluster_set_exception_from_another_thread(WASMExecEnv *exec_env, const char *exception);
 
 WASMExecEnv *
 wasm_cluster_spawn_exec_env(WASMExecEnv *exec_env);

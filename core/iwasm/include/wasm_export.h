@@ -952,6 +952,18 @@ WASM_RUNTIME_API_EXTERN void
 wasm_runtime_set_exception(wasm_module_inst_t module_inst,
                            const char *exception);
 
+
+/**
+ * Set exception info of the WASM module instance.
+ *
+ * @param module_inst the WASM module instance
+ *
+ * @param exception the exception string
+ */
+WASM_RUNTIME_API_EXTERN void
+wasm_runtime_set_exception_from_another_thread(wasm_module_inst_t module_inst,
+                           const char *exception);
+
 /**
  * Clear exception info of the WASM module instance.
  *

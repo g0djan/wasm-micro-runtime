@@ -4,11 +4,14 @@
  */
 
 #include "bh_log.h"
+#include "bh_vector.h"
+#include "platform_common.h"
 #include "wasm_c_api_internal.h"
 
 #include "bh_assert.h"
 #include "wasm_export.h"
 #include "wasm_memory.h"
+#include <stdbool.h>
 #if WASM_ENABLE_INTERP != 0
 #include "wasm_runtime.h"
 #endif
@@ -1939,6 +1942,15 @@ wasm_frame_vec_clone_internal(Vector *src, Vector *out)
     out->num_elems = src->num_elems;
 }
 
+void
+wasm_frame_vec_extend_internal(Vector *addition, Vector *out) {
+    bh_assert(addition->num_elems != 0 && addition->data);
+
+    for (uint32 i = 0; i < addition->num_elems; i++) {
+        bh_vector_append(out, &(((WASMCApiFrame *)addition->data)[i]));
+    }
+}
+
 static wasm_trap_t *
 wasm_trap_new_internal(wasm_store_t *store,
                        WASMModuleInstanceCommon *inst_comm_rt,
@@ -3412,6 +3424,7 @@ failed:
 
 #if WASM_ENABLE_DUMP_CALL_STACK != 0 && WASM_ENABLE_THREAD_MGR != 0
     WASMCluster *cluster = wasm_exec_env_get_cluster(exec_env);
+    wasm_cluster_wait_for_all_except_self(cluster, exec_env);
     cluster_frames = &cluster->exception_frames;
     wasm_cluster_traverse_lock(exec_env);
 #endif

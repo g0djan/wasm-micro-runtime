@@ -13,6 +13,8 @@
 #if WASM_ENABLE_SHARED_MEMORY != 0
 #include "../common/wasm_shared_memory.h"
 #endif
+#include "thread_manager.h"
+#include "../common/wasm_c_api_internal.h"
 
 typedef int32 CellType_I32;
 typedef int64 CellType_I64;
@@ -4048,6 +4050,17 @@ wasm_interp_call_wasm(WASMModuleInstance *module_inst, WASMExecEnv *exec_env,
     else {
 #if WASM_ENABLE_DUMP_CALL_STACK != 0
         if (wasm_interp_create_call_stack(exec_env)) {
+            WASMCluster *cluster = wasm_exec_env_get_cluster(exec_env);
+            bh_assert(cluster);
+            os_mutex_lock(&cluster->lock);
+            if (!cluster->exception_frames_initialised) {
+                wasm_frame_vec_clone_internal(module_inst->frames,
+                                          &cluster->exception_frames);
+                cluster->exception_frames_initialised = true;
+            } else {
+                wasm_frame_vec_extend_internal(module_inst->frames, &cluster->exception_frames);
+            }
+            os_mutex_unlock(&cluster->lock);
             wasm_interp_dump_call_stack(exec_env, true, NULL, 0);
         }
 #endif

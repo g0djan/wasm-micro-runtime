@@ -696,6 +696,11 @@ wasm_runtime_set_exception(WASMModuleInstanceCommon *module,
                            const char *exception);
 
 /* See wasm_export.h for description */
+WASM_RUNTIME_API_EXTERN void
+wasm_runtime_set_exception_from_another_thread(WASMModuleInstanceCommon *module,
+                           const char *exception);
+
+/* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN const char *
 wasm_runtime_get_exception(WASMModuleInstanceCommon *module);
 
