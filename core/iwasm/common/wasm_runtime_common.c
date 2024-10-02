@@ -3060,6 +3060,29 @@ wasm_runtime_set_exception(WASMModuleInstanceCommon *module_inst_comm,
     wasm_set_exception(module_inst, exception);
 }
 
+void
+wasm_runtime_set_exception_from_another_thread(WASMModuleInstanceCommon *module_inst_comm,
+                           const char *exception)
+{
+    WASMModuleInstance *module_inst = (WASMModuleInstance *)module_inst_comm;
+
+    bh_assert(module_inst_comm->module_type == Wasm_Module_Bytecode
+              || module_inst_comm->module_type == Wasm_Module_AoT);
+
+#if WASM_ENABLE_THREAD_MGR != 0
+    WASMExecEnv *exec_env =
+        wasm_clusters_search_exec_env((WASMModuleInstanceCommon *)module_inst);
+    if (exec_env) {
+        wasm_cluster_set_exception_from_another_thread(exec_env, exception);
+    }
+    else {
+        wasm_set_exception_local(module_inst, exception);
+    }
+#else
+    wasm_set_exception_local(module_inst, exception);
+#endif
+}
+
 const char *
 wasm_runtime_get_exception(WASMModuleInstanceCommon *module_inst_comm)
 {
