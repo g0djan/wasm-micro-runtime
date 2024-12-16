@@ -26,6 +26,10 @@
 #endif
 #endif
 
+_Atomic voidptr global_env_atomic_ptr = NULL;
+_Atomic voidptr head_frame_atomic_ptr = NULL;
+atomic_bool is_in_stacktrace_generation = false;
+
 WASMExecEnv *
 wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
                               uint32 stack_size)
@@ -72,6 +76,9 @@ wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
     exec_env->wasm_stack.top_boundary =
         exec_env->wasm_stack.bottom + stack_size;
     exec_env->wasm_stack.top = exec_env->wasm_stack.bottom;
+
+    is_in_stacktrace_generation = false;
+    head_frame_atomic_ptr = exec_env->wasm_stack.top;
 
 #if WASM_ENABLE_AOT != 0
     if (module_inst->module_type == Wasm_Module_AoT) {

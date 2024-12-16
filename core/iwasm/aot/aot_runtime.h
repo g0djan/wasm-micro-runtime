@@ -775,6 +775,9 @@ void
 aot_frame_update_profile_info(WASMExecEnv *exec_env, bool alloc_frame);
 
 bool
+aot_create_call_stack_signal_safe(struct WASMExecEnv *exec_env);
+
+bool
 aot_create_call_stack(struct WASMExecEnv *exec_env);
 
 /**

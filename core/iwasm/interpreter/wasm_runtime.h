@@ -730,6 +730,8 @@ wasm_get_table_inst(const WASMModuleInstance *module_inst, uint32 tbl_idx)
 }
 
 #if WASM_ENABLE_DUMP_CALL_STACK != 0
+bool wasm_interp_create_call_stack_signal_safe(struct WASMExecEnv * exec_env);
+
 bool
 wasm_interp_create_call_stack(struct WASMExecEnv *exec_env);
 

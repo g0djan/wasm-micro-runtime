@@ -23,6 +23,16 @@
         }                                                         \
     } while (0)
 
+#define ADD_ATOMIC_STORE(store_instance, value, pointer)                                 \
+    do {                                                          \
+        if (!(store_instance = LLVMBuildStore(comp_ctx->builder, value, pointer))) { \
+            aot_set_last_error("llvm build store failed");        \
+            return false;                                         \
+        }                                                         \
+        LLVMSetVolatile(store_instance, true);                             \
+        LLVMSetOrdering(store_instance, LLVMAtomicOrderingSequentiallyConsistent); \
+    } while (0)
+
 #define ADD_LOAD(value, type, pointer)                                         \
     do {                                                                       \
         if (!(value =                                                          \
@@ -32,6 +42,17 @@
         }                                                                      \
     } while (0)
 
+#define ADD_ATOMIC_LOAD(value, type, pointer)                                         \
+    do {                                                                       \
+        if (!(value =                                                          \
+                  LLVMBuildLoad2(comp_ctx->builder, type, pointer, #value))) { \
+            aot_set_last_error("llvm build load failed");                      \
+            return false;                                                      \
+        }                                                                      \
+        LLVMSetVolatile(value, true);                                          \
+        LLVMSetOrdering(value, LLVMAtomicOrderingSequentiallyConsistent);       \
+    } while (0)
+
 static bool
 aot_alloc_tiny_frame_for_aot_func(AOTCompContext *comp_ctx,
                                   AOTFuncContext *func_ctx,
@@ -39,11 +60,11 @@ aot_alloc_tiny_frame_for_aot_func(AOTCompContext *comp_ctx,
 {
     LLVMValueRef wasm_stack_top_ptr = func_ctx->wasm_stack_top_ptr,
                  wasm_stack_top_bound = func_ctx->wasm_stack_top_bound,
-                 wasm_stack_top, cmp;
+                 wasm_stack_top, cmp, store_instance;
     LLVMBasicBlockRef check_wasm_stack_succ;
     LLVMValueRef offset;
 
-    ADD_LOAD(wasm_stack_top, INT8_PTR_TYPE, wasm_stack_top_ptr);
+    ADD_ATOMIC_LOAD(wasm_stack_top, INT8_PTR_TYPE, wasm_stack_top_ptr);
 
     if (comp_ctx->call_stack_features.bounds_checks) {
         if (!(check_wasm_stack_succ = LLVMAppendBasicBlockInContext(
@@ -77,7 +98,7 @@ aot_alloc_tiny_frame_for_aot_func(AOTCompContext *comp_ctx,
     /* increment the stack pointer */
     INT_CONST(offset, sizeof(AOTTinyFrame), I32_TYPE, true);
     ADD_IN_BOUNDS_GEP(wasm_stack_top, INT8_TYPE, wasm_stack_top, &offset, 1);
-    ADD_STORE(wasm_stack_top, wasm_stack_top_ptr);
+    ADD_ATOMIC_STORE(store_instance, wasm_stack_top, wasm_stack_top_ptr);
 
     return true;
 }
@@ -87,15 +108,15 @@ aot_free_tiny_frame_for_aot_func(AOTCompContext *comp_ctx,
                                  AOTFuncContext *func_ctx)
 {
     LLVMValueRef wasm_stack_top_ptr = func_ctx->wasm_stack_top_ptr,
-                 wasm_stack_top;
+                 wasm_stack_top, store_instance;
     LLVMValueRef offset;
 
-    ADD_LOAD(wasm_stack_top, INT8_PTR_TYPE, wasm_stack_top_ptr);
+    ADD_ATOMIC_LOAD(wasm_stack_top, INT8_PTR_TYPE, wasm_stack_top_ptr);
 
     INT_CONST(offset, -sizeof(AOTTinyFrame),
               comp_ctx->pointer_size == 8 ? I64_TYPE : I32_TYPE, true);
     ADD_IN_BOUNDS_GEP(wasm_stack_top, INT8_TYPE, wasm_stack_top, &offset, 1);
-    ADD_STORE(wasm_stack_top, wasm_stack_top_ptr);
+    ADD_ATOMIC_STORE(store_instance, wasm_stack_top, wasm_stack_top_ptr);
 
     return true;
 }
@@ -110,7 +131,7 @@ aot_tiny_frame_gen_commit_ip(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
 
     bh_assert(ip_value);
 
-    ADD_LOAD(wasm_stack_top, INT8_PTR_TYPE, wasm_stack_top_ptr);
+    ADD_ATOMIC_LOAD(wasm_stack_top, INT8_PTR_TYPE, wasm_stack_top_ptr);
 
     INT_CONST(offset, -4, comp_ctx->pointer_size == 8 ? I64_TYPE : I32_TYPE,
               true);

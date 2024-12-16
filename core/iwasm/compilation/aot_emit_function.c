@@ -669,6 +669,10 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
             aot_set_last_error("load wasm_stack.top failed");
             return false;
         }
+        // only here because the pointer is Atomic and accessing it directly is UB
+        // not needed if atomic/not atomic defined in compilation time
+        LLVMSetVolatile(wasm_stack_top, true);
+        LLVMSetOrdering(wasm_stack_top, LLVMAtomicOrderingSequentiallyConsistent);
 
         /* Check whether wasm operand stack is overflow */
         offset = I32_CONST(frame_size_with_outs_area);
@@ -710,7 +714,7 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
 
 #if WASM_ENABLE_GC != 0
     if (comp_ctx->enable_gc) {
-        LLVMValueRef wasm_stack_top_new, frame_ref, frame_ref_ptr;
+        LLVMValueRef wasm_stack_top_new, frame_ref, frame_ref_ptr, store_instance;
         uint32 j, k;
 
         /* exec_env->wasm_stack.top += frame_size */
@@ -722,11 +726,13 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
             aot_set_last_error("llvm build in bounds gep failed");
             return false;
         }
-        if (!LLVMBuildStore(comp_ctx->builder, wasm_stack_top_new,
-                            wasm_stack_top_ptr)) {
+        if (!(store_instance = LLVMBuildStore(comp_ctx->builder, wasm_stack_top_new,
+                            wasm_stack_top_ptr))) {
             aot_set_last_error("llvm build store failed");
             return false;
         }
+        LLVMSetVolatile(store_instance, true);
+        LLVMSetOrdering(store_instance, LLVMAtomicOrderingSequentiallyConsistent);
 
         if (func_idx < import_func_count) {
             LLVMValueRef frame_sp, frame_sp_ptr;
@@ -1050,7 +1056,7 @@ fail:
 static bool
 free_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx)
 {
-    LLVMValueRef cur_frame_ptr = func_ctx->cur_frame_ptr, cur_frame;
+    LLVMValueRef cur_frame_ptr = func_ctx->cur_frame_ptr, cur_frame, store_instance;
     LLVMValueRef wasm_stack_top_ptr = func_ctx->wasm_stack_top_ptr;
     LLVMTypeRef int8_ptr_type;
 
@@ -1138,10 +1144,15 @@ free_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx)
         }
 
         /* exec_env->wasm_stack.top = cur_frame */
-        if (!LLVMBuildStore(comp_ctx->builder, cur_frame, wasm_stack_top_ptr)) {
+        if (!(store_instance = LLVMBuildStore(comp_ctx->builder, cur_frame, wasm_stack_top_ptr))) {
             aot_set_last_error("llvm build store failed");
             return false;
         }
+        // only here because the pointer is Atomic and accessing it directly is UB
+        // not needed if atomic/not atomic defined in compilation time
+        LLVMSetVolatile(store_instance, true);
+        LLVMSetOrdering(store_instance, LLVMAtomicOrderingSequentiallyConsistent);
+        
     }
 
     /* exec_env->cur_frame = prev_frame */

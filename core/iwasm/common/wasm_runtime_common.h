@@ -673,6 +673,16 @@ wasm_runtime_set_user_data(WASMExecEnv *exec_env, void *user_data);
 WASM_RUNTIME_API_EXTERN void *
 wasm_runtime_get_user_data(WASMExecEnv *exec_env);
 
+
+WASM_RUNTIME_API_EXTERN void*
+wasm_runtime_register_stacktrace_dump_signal_handler();
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_start_generating_stacktraces();
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_stop_generating_stacktraces();
+
 /* See wasm_export.h for description */
 WASM_RUNTIME_API_EXTERN void
 wasm_runtime_set_native_stack_boundary(WASMExecEnv *exec_env,

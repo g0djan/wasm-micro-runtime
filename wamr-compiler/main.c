@@ -314,6 +314,7 @@ finish:
 static bool
 can_enable_tiny_frame(const AOTCompOption *opt)
 {
+    printf("can_enable_tiny_frame %d %d %d", opt->call_stack_features.values, opt->enable_gc, opt->enable_perf_profiling);
     return !opt->call_stack_features.values && !opt->enable_gc
            && !opt->enable_perf_profiling;
 }
@@ -664,6 +665,7 @@ main(int argc, char *argv[])
     if (!use_dummy_wasm && (argc == 0 || !out_file_name))
         PRINT_HELP_AND_EXIT();
 
+    printf("stack frame type %d\n", option.aux_stack_frame_type);
     if (option.aux_stack_frame_type == AOT_STACK_FRAME_TYPE_STANDARD
         && can_enable_tiny_frame(&option)) {
         LOG_VERBOSE("Use tiny frame mode for stack frames");

@@ -5,6 +5,7 @@
 
 #include "wasm_runtime.h"
 #include "wasm.h"
+#include "wasm_exec_env.h"
 #include "wasm_loader.h"
 #include "wasm_interp.h"
 #include "bh_common.h"
@@ -3588,6 +3589,7 @@ call_wasm_with_hw_bound_check(WASMModuleInstance *module_inst,
         /* Restore operand frames */
         wasm_exec_env_set_cur_frame(exec_env, prev_frame);
         exec_env->wasm_stack.top = prev_top;
+        head_frame_atomic_ptr = exec_env->wasm_stack.top;
     }
 
     jmpbuf_node_pop = wasm_exec_env_pop_jmpbuf(exec_env);
@@ -4196,6 +4198,34 @@ wasm_get_module_inst_mem_consumption(const WASMModuleInstance *module_inst,
                  || (WASM_ENABLE_MEMORY_TRACING != 0) */
 
 #if WASM_ENABLE_DUMP_CALL_STACK != 0
+bool wasm_interp_create_call_stack_signal_safe(struct WASMExecEnv * exec_env)
+{
+    if (exec_env == NULL) {
+        return false;
+    }
+    WASMModuleInstance *module_inst =
+        (WASMModuleInstance *)wasm_exec_env_get_module_inst(exec_env);
+    if (module_inst == NULL) {
+        return false;
+    }
+
+
+    WASMInterpFrame *cur_frame = head_frame_atomic_ptr;
+
+
+    while (cur_frame) {
+        if (!cur_frame->function) {
+            cur_frame = cur_frame->prev_frame;
+            continue;
+        }
+
+        //it will be writing to a file to preserve async signal safety
+        printf("index %d\n", cur_frame->func_index);
+        cur_frame = cur_frame->prev_frame;
+    }
+    return true;
+}
+
 bool
 wasm_interp_create_call_stack(struct WASMExecEnv *exec_env)
 {

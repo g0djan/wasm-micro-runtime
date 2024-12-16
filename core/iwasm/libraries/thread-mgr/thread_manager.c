@@ -1331,6 +1331,31 @@ set_exception_visitor(void *node, void *user_data)
 }
 
 void
+wasm_cluster_create_and_dump_callstack(WASMExecEnv *exec_env) {
+    #if WASM_ENABLE_DUMP_CALL_STACK != 0
+
+    WASMModuleInstance *module_inst = 
+             (WASMModuleInstance *)get_module_inst(exec_env);
+    if (module_inst == NULL) {
+        return;
+    }
+
+    #if WASM_ENABLE_INTERP != 0
+        if (module_inst->module_type == Wasm_Module_Bytecode) {
+            wasm_interp_create_call_stack_signal_safe(exec_env);
+        }
+    #endif
+
+    #if WASM_ENABLE_AOT != 0
+        if (module_inst->module_type == Wasm_Module_AoT) {
+            aot_create_call_stack_signal_safe(exec_env);
+        }
+    #endif
+
+    #endif
+}
+
+void
 wasm_cluster_set_exception(WASMExecEnv *exec_env, const char *exception)
 {
     const bool has_exception = exception != NULL;
