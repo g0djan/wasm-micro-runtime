@@ -4,7 +4,11 @@
  */
 
 #include "wasm_exec_env.h"
+#include "platform_common.h"
+#include "wasm_export.h"
+#include "wasm_interp.h"
 #include "wasm_runtime_common.h"
+#include <stdatomic.h>
 #if WASM_ENABLE_GC != 0
 #include "mem_alloc.h"
 #endif
@@ -24,6 +28,24 @@
 #if WASM_ENABLE_DEBUG_INTERP != 0
 #include "../libraries/debug-engine/debug_engine.h"
 #endif
+#endif
+
+// Align address downward
+#define ALIGN_DOWN(addr, align) ((addr) & ~((align) - 1))
+
+_Atomic voidptr global_env_atomic_ptr = NULL;
+atomic_bool is_in_stacktrace_generation = false;
+
+
+#if WASM_ENABLE_AOT_STACK_FRAME != 0
+static bool
+is_tiny_frame(WASMExecEnv *exec_env)
+{
+    AOTModule *module =
+        (AOTModule *)((AOTModuleInstance *)exec_env->module_inst)->module;
+
+    return module->feature_flags & WASM_FEATURE_TINY_STACK_FRAME;
+}
 #endif
 
 WASMExecEnv *
@@ -65,13 +87,34 @@ wasm_exec_env_create_internal(struct WASMModuleInstanceCommon *module_inst,
                       os_get_invalid_handle())))
         goto fail5;
 #endif
-
     exec_env->module_inst = module_inst;
-    exec_env->wasm_stack_size = stack_size;
     exec_env->wasm_stack.bottom = exec_env->wasm_stack_u.bottom;
-    exec_env->wasm_stack.top_boundary =
-        exec_env->wasm_stack.bottom + stack_size;
     exec_env->wasm_stack.top = exec_env->wasm_stack.bottom;
+    
+    size_t atomic_size = 0;
+    size_t atomic_align = 0;
+    
+    int istiny_frame = is_tiny_frame(exec_env);
+    printf("istinyframe %d\n", istiny_frame);
+    if (module_inst->module_type == Wasm_Module_Bytecode || (module_inst->module_type == Wasm_Module_AoT && !istiny_frame)) {
+        atomic_size = sizeof(_Atomic(struct WASMInterpFrame*));
+        atomic_align = _Alignof(_Atomic(struct WASMInterpFrame*));
+        _Atomic(struct WASMInterpFrame*)* aligned_atomic_pos = (_Atomic(struct WASMInterpFrame*)*)(ALIGN_DOWN((uintptr_t)(exec_env->wasm_stack_u.bottom + stack_size - atomic_size), atomic_align));
+        exec_env->wasm_stack_size = (uint32)((uint8*)aligned_atomic_pos - exec_env->wasm_stack_u.bottom);
+        exec_env->wasm_stack.top_boundary = (uint8*)aligned_atomic_pos;
+        atomic_store(aligned_atomic_pos, exec_env->cur_frame);
+    } else if (module_inst->module_type == Wasm_Module_AoT) {
+        atomic_size = sizeof(_Atomic(uint8*));
+        atomic_align = _Alignof(_Atomic(uint8*));
+        _Atomic(uint8*)* aligned_atomic_pos = (_Atomic(uint8*)*)(ALIGN_DOWN((uintptr_t)(exec_env->wasm_stack_u.bottom + stack_size - atomic_size), atomic_align));
+        exec_env->wasm_stack_size = (uint32)((uint8*)aligned_atomic_pos - exec_env->wasm_stack_u.bottom);
+        exec_env->wasm_stack.top_boundary = (uint8*)aligned_atomic_pos;
+        atomic_store(aligned_atomic_pos, exec_env->wasm_stack.top);
+    }
+
+
+
+    is_in_stacktrace_generation = false;
 
 #if WASM_ENABLE_AOT != 0
     if (module_inst->module_type == Wasm_Module_AoT) {
@@ -195,6 +238,9 @@ wasm_exec_env_create(struct WASMModuleInstanceCommon *module_inst,
 void
 wasm_exec_env_destroy(WASMExecEnv *exec_env)
 {
+    if (exec_env == global_env_atomic_ptr) {
+        global_env_atomic_ptr = NULL;
+    }
 #if WASM_ENABLE_THREAD_MGR != 0
     /* Wait for all sub-threads */
     WASMCluster *cluster = wasm_exec_env_get_cluster(exec_env);

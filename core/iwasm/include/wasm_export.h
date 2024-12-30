@@ -1757,6 +1757,15 @@ wasm_runtime_set_user_data(wasm_exec_env_t exec_env, void *user_data);
 WASM_RUNTIME_API_EXTERN void *
 wasm_runtime_get_user_data(wasm_exec_env_t exec_env);
 
+WASM_RUNTIME_API_EXTERN void*
+wasm_runtime_register_stacktrace_dump_signal_handler();
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_start_generating_stacktraces();
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_stop_generating_stacktraces();
+
 /**
  * Set native stack boundary to execution environment, if it is set,
  * it will be used instead of getting the boundary with the platform

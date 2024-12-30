@@ -7,9 +7,12 @@
 #include "bh_common.h"
 #include "bh_assert.h"
 #include "bh_log.h"
+#include "wasm_exec_env.h"
 #include "wasm_native.h"
 #include "wasm_runtime_common.h"
 #include "wasm_memory.h"
+#include <pthread.h>
+#include <sys/signal.h>
 #if WASM_ENABLE_INTERP != 0
 #include "../interpreter/wasm_runtime.h"
 #endif
@@ -2225,6 +2228,43 @@ wasm_runtime_get_user_data(WASMExecEnv *exec_env)
     return exec_env->user_data;
 }
 
+void signal_handler(int signo) {
+    if (!is_in_stacktrace_generation) {
+        return;
+    }
+    wasm_cluster_create_and_dump_callstack(global_env_atomic_ptr);
+    wasm_runtime_stop_generating_stacktraces();
+}
+
+void*
+wasm_runtime_register_stacktrace_dump_signal_handler(){
+    pthread_t vm_tid = pthread_self();
+    struct sigaction sa;
+
+    // Set up signal handler
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGUSR2, &sa, NULL);
+    return vm_tid;
+}
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_start_generating_stacktraces() {
+    if (!is_in_stacktrace_generation) {
+        is_in_stacktrace_generation = true;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+WASM_RUNTIME_API_EXTERN bool
+wasm_runtime_stop_generating_stacktraces() {
+    is_in_stacktrace_generation = false;
+    return is_in_stacktrace_generation;
+}
+
 void
 wasm_runtime_set_native_stack_boundary(WASMExecEnv *exec_env,
                                        uint8 *native_stack_boundary)
@@ -2944,6 +2984,8 @@ wasm_runtime_create_exec_env_singleton(
                                     module_inst->default_wasm_stack_size);
     if (exec_env)
         module_inst->exec_env_singleton = exec_env;
+
+    global_env_atomic_ptr = exec_env;
 
     return exec_env ? true : false;
 }

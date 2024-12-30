@@ -22,6 +22,17 @@
         }                                                                     \
     } while (0)
 
+#define ADD_ATOMIC_STORE(store_instance, value, pointer)                                 \
+    do {                                                          \
+        if (!(store_instance = LLVMBuildStore(comp_ctx->builder, value, pointer))) { \
+            aot_set_last_error("llvm build store failed");        \
+            return false;                                         \
+        }                                                         \
+        LLVMSetAlignment(store_instance, 8); \
+        LLVMSetVolatile(store_instance, true);                             \
+        LLVMSetOrdering(store_instance, LLVMAtomicOrderingSequentiallyConsistent); \
+    } while (0)
+
 static bool
 is_win_platform(AOTCompContext *comp_ctx)
 {
@@ -569,7 +580,7 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
     LLVMValueRef wasm_stack_top_ptr = func_ctx->wasm_stack_top_ptr,
                  wasm_stack_top;
     LLVMValueRef wasm_stack_top_max, offset, cmp;
-    LLVMValueRef cur_frame, new_frame, prev_frame_ptr;
+    LLVMValueRef cur_frame, new_frame, prev_frame_ptr, store_instance;
     LLVMValueRef cur_frame_ptr = func_ctx->cur_frame_ptr;
     LLVMValueRef func_idx_ptr, func_idx_val, func_inst_ptr, func_inst;
     LLVMTypeRef int8_ptr_type;
@@ -722,7 +733,7 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
             aot_set_last_error("llvm build in bounds gep failed");
             return false;
         }
-        if (!LLVMBuildStore(comp_ctx->builder, wasm_stack_top_new,
+        if (LLVMBuildStore(comp_ctx->builder, wasm_stack_top_new,
                             wasm_stack_top_ptr)) {
             aot_set_last_error("llvm build store failed");
             return false;
@@ -973,6 +984,8 @@ alloc_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
         return false;
     }
 
+    ADD_ATOMIC_STORE(store_instance, new_frame, wasm_stack_top_bound);
+
     if (comp_ctx->enable_perf_profiling || comp_ctx->enable_memory_profiling) {
         LLVMTypeRef param_types[2], func_type, func_ptr_type;
         LLVMValueRef param_values[2], func = NULL, res;
@@ -1050,8 +1063,9 @@ fail:
 static bool
 free_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx)
 {
-    LLVMValueRef cur_frame_ptr = func_ctx->cur_frame_ptr, cur_frame;
+    LLVMValueRef cur_frame_ptr = func_ctx->cur_frame_ptr, cur_frame, store_instance;
     LLVMValueRef wasm_stack_top_ptr = func_ctx->wasm_stack_top_ptr;
+    LLVMValueRef wasm_stack_top_bound = func_ctx->wasm_stack_top_bound;
     LLVMTypeRef int8_ptr_type;
 
     /* `int8 **` type */
@@ -1143,6 +1157,8 @@ free_frame_for_aot_func(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx)
             return false;
         }
     }
+
+    ADD_ATOMIC_STORE(store_instance, func_ctx->cur_frame, wasm_stack_top_bound);
 
     /* exec_env->cur_frame = prev_frame */
     if (!LLVMBuildStore(comp_ctx->builder, func_ctx->cur_frame,

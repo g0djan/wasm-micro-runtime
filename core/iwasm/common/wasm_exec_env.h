@@ -7,7 +7,14 @@
 #define _WASM_EXEC_ENV_H
 
 #include "bh_assert.h"
+#include "platform_common.h"
 #include "wasm_suspend_flags.h"
+#ifdef __cplusplus
+#include <atomic>
+#define _Atomic(T) std::atomic<T>
+#else
+#include <stdatomic.h>
+#endif
 #if WASM_ENABLE_INTERP != 0
 #include "../interpreter/wasm.h"
 #endif
@@ -32,6 +39,11 @@ typedef struct WASMJmpBuf {
     korp_jmpbuf jmpbuf;
 } WASMJmpBuf;
 #endif
+
+
+typedef void* voidptr;
+extern _Atomic(voidptr) global_env_atomic_ptr;
+extern _Atomic(bool) is_in_stacktrace_generation;
 
 /* Execution environment */
 typedef struct WASMExecEnv {
@@ -82,7 +94,7 @@ typedef struct WASMExecEnv {
         /* The top boundary of the stack. */
         uint8 *top_boundary;
         /* The top to of the wasm stack which is free. */
-        uint8 *top;
+        uint8* top;
         /* The bottom of the wasm stack. */
         uint8 *bottom;
     } wasm_stack;
@@ -271,6 +283,8 @@ wasm_exec_env_set_cur_frame(WASMExecEnv *exec_env,
                             struct WASMInterpFrame *frame)
 {
     exec_env->cur_frame = frame;
+    _Atomic(struct WASMInterpFrame*)* atomic_ptr = (_Atomic(struct WASMInterpFrame*)*)exec_env->wasm_stack.top_boundary;
+    atomic_store(atomic_ptr, (struct WASMInterpFrame*)exec_env->cur_frame);
 }
 
 /**

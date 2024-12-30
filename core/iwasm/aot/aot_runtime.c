@@ -10,6 +10,8 @@
 #include "../common/wasm_runtime_common.h"
 #include "../common/wasm_memory.h"
 #include "../interpreter/wasm_runtime.h"
+#include "platform_common.h"
+#include "wasm_exec_env.h"
 #if WASM_ENABLE_SHARED_MEMORY != 0
 #include "../common/wasm_shared_memory.h"
 #endif
@@ -3918,6 +3920,9 @@ aot_alloc_standard_frame(WASMExecEnv *exec_env, uint32 func_index)
 
     exec_env->cur_frame = (struct WASMInterpFrame *)frame;
 
+    _Atomic(struct WASMInterpFrame*)* atomic_ptr = (_Atomic(struct WASMInterpFrame*)*)exec_env->wasm_stack.top_boundary;
+    atomic_store(atomic_ptr, (struct WASMInterpFrame*)exec_env->cur_frame);
+
     return true;
 }
 
@@ -3993,6 +3998,9 @@ aot_alloc_tiny_frame(WASMExecEnv *exec_env, uint32 func_index)
 
     new_frame->func_index = func_index;
     exec_env->wasm_stack.top += sizeof(AOTTinyFrame);
+
+    _Atomic(uint8*)* atomic_ptr = (_Atomic(uint8*)*)exec_env->wasm_stack.top_boundary;
+    atomic_store(atomic_ptr, exec_env->wasm_stack.top);
     return true;
 }
 
@@ -4022,6 +4030,8 @@ aot_free_standard_frame(WASMExecEnv *exec_env)
 {
     AOTFrame *cur_frame = (AOTFrame *)exec_env->cur_frame;
     AOTFrame *prev_frame = (AOTFrame *)cur_frame->prev_frame;
+    _Atomic(struct WASMInterpFrame*)* atomic_ptr = (_Atomic(struct WASMInterpFrame*)*)exec_env->wasm_stack.top_boundary;
+    atomic_store(atomic_ptr, (struct WASMInterpFrame*)prev_frame);
 
 #if WASM_ENABLE_PERF_PROFILING != 0
     uint64 time_elapsed =
@@ -4044,8 +4054,10 @@ aot_free_standard_frame(WASMExecEnv *exec_env)
 static inline void
 aot_free_tiny_frame(WASMExecEnv *exec_env)
 {
-    exec_env->wasm_stack.top =
-        get_prev_frame(exec_env, exec_env->wasm_stack.top);
+    _Atomic(uint8*)* atomic_ptr = (_Atomic(uint8*)*)exec_env->wasm_stack.top_boundary;
+    void* prev_frame = get_prev_frame(exec_env, exec_env->wasm_stack.top);
+    atomic_store(atomic_ptr, prev_frame);
+    exec_env->wasm_stack.top = prev_frame;
 }
 
 void
@@ -4104,6 +4116,40 @@ aot_frame_update_profile_info(WASMExecEnv *exec_env, bool alloc_frame)
 #endif /* end of WASM_ENABLE_AOT_STACK_FRAME != 0 */
 
 #if WASM_ENABLE_DUMP_CALL_STACK != 0
+bool
+aot_create_call_stack_signal_safe(struct WASMExecEnv *exec_env) {
+    if (exec_env == NULL) {
+        return false;
+    }
+    AOTModuleInstance *module_inst = (AOTModuleInstance *)exec_env->module_inst;
+    if (module_inst == NULL) {
+        return false;
+    }
+
+    _Atomic(uint8*)* atomic_ptr = (_Atomic(uint8*)*)exec_env->wasm_stack.top_boundary;
+    void *cur_frame = (uint8*)atomic_load(atomic_ptr);
+    if (is_tiny_frame(exec_env)) {
+         cur_frame -= sizeof(AOTTinyFrame);
+    }
+   
+
+    // printf("top_frame %p, cur_frame %p, %ld\n", exec_env->wasm_stack.top, atomic_load(atomic_ptr), (exec_env->wasm_stack.top - atomic_load(atomic_ptr)));
+
+    while (cur_frame) {
+        if (is_tiny_frame(exec_env)) {
+            AOTTinyFrame *frame = (AOTTinyFrame *)cur_frame;
+            //it will be writing to a file to preserve async signal safety
+            printf("aot tiny index %d\n", frame->func_index);
+        } else {
+            AOTFrame *frame = (AOTFrame *)cur_frame;
+            //it will be writing to a file to preserve async signal safety
+            printf("aot standard index %d\n", (uint32) frame->func_index);
+        }
+        cur_frame = get_prev_frame(exec_env, cur_frame);
+    }
+    return true;
+}
+
 bool
 aot_create_call_stack(struct WASMExecEnv *exec_env)
 {

@@ -314,6 +314,7 @@ finish:
 static bool
 can_enable_tiny_frame(const AOTCompOption *opt)
 {
+    printf("can_enable_tiny_frame %d %d %d", opt->call_stack_features.values, opt->enable_gc, opt->enable_perf_profiling);
     return !opt->call_stack_features.values && !opt->enable_gc
            && !opt->enable_perf_profiling;
 }

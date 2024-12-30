@@ -1205,9 +1205,12 @@ wasm_interp_call_func_native(WASMModuleInstance *module_inst,
     init_frame_refs(frame->frame_ref, local_cell_num, cur_func);
 #endif
 
+    cur_func_index = (uint32)(cur_func - module_inst->e->functions);
+    frame->func_index = cur_func_index;
+
     wasm_exec_env_set_cur_frame(exec_env, frame);
 
-    cur_func_index = (uint32)(cur_func - module_inst->e->functions);
+    
     bh_assert(cur_func_index < module_inst->module->import_function_count);
     if (!func_import->call_conv_wasm_c_api) {
         native_func_pointer = module_inst->import_func_ptrs[cur_func_index];
@@ -1274,8 +1277,8 @@ wasm_interp_call_func_native(WASMModuleInstance *module_inst,
         prev_frame->lp[prev_frame->ret_offset + 1] = argv_ret[1];
     }
 
-    FREE_FRAME(exec_env, frame);
     wasm_exec_env_set_cur_frame(exec_env, prev_frame);
+    FREE_FRAME(exec_env, frame);
 }
 
 #if WASM_ENABLE_MULTI_MODULE != 0
@@ -6031,6 +6034,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
             /* Initialize the interpreter context. */
             frame->function = cur_func;
+            frame->func_index = (uint32)(cur_func - module->e->functions);
             frame_ip = wasm_get_func_code(cur_func);
             frame_ip_end = wasm_get_func_code_end(cur_func);
 
@@ -6080,8 +6084,8 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
 
     return_func:
     {
-        FREE_FRAME(exec_env, frame);
         wasm_exec_env_set_cur_frame(exec_env, (WASMRuntimeFrame *)prev_frame);
+        FREE_FRAME(exec_env, frame);
 
         if (!prev_frame->ip)
             /* Called from native. */
